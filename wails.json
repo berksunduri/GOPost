@@ -1,0 +1,21 @@
+{
+  "name": "GoPost",
+  "outputType": "desktop",
+  "debounce": 700,
+  "devServer": "http://localhost:34115",
+  "frontend": {
+    "dir": "frontend",
+    "wailsjs": "frontend/src/wailsjs"
+  },
+  "build": {
+    "appId": "com.gopost.app",
+    "productName": "GoPost",
+    "outputFilename": "gopost",
+    "windows": {
+      "icon": "build/windows/icon.ico"
+    },
+    "nsis": {
+      "onlyOnLanguageSelection": false
+    }
+  }
+}

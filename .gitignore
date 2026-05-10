@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+gopost
+
+# Go
+*.test
+*.out
+coverage.out
+cpu.prof
+mem.prof
+vendor/
+
+# Wails
+build/bin/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Logs and scratch output
+*.log
+build_output.txt
+go_run_out.txt
+test_output.txt
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / local env
+.env
+.env.*
+
+frontend/node_modules/
+frontend/dist/
