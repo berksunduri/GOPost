@@ -1,215 +1,295 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { t } from '../i18n';
-import { api } from '../api';
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useApp } from "@/context/AppContext";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Separator,
+} from "@/components/ui";
+import { MethodSelector } from "./request/MethodSelector";
+import { URLBar } from "./request/URLBar";
+import { HeadersEditor } from "./request/HeadersEditor";
+import { AuthEditor } from "./request/AuthEditor";
+import { ParamsEditor } from "./request/ParamsEditor";
+import { BodyEditor } from "./request/BodyEditor";
+import { ResponseViewer } from "./request/ResponseViewer";
+import { t } from "@/i18n";
+import { api } from "@/api";
+import { toast } from "sonner";
 
-function RequestEditor({ collection, selectedRequest, selectedEnvironmentVariables, onSelectRequest, onRefreshRequests }) {
-  const [method, setMethod] = useState('GET');
-  const [name, setName] = useState('');
-  const [url, setURL] = useState('');
-  const [headers, setHeaders] = useState([{ key: '', value: '' }]);
-  const [body, setBody] = useState('');
+function RequestEditor() {
+  const {
+    selectedCollection,
+    selectedRequest,
+    selectedEnvironment,
+    refreshRequests,
+    setSelectedRequest,
+  } = useApp();
+
+  const [method, setMethod] = useState("GET");
+  const [name, setName] = useState("");
+  const [url, setURL] = useState("");
+  const [headers, setHeaders] = useState([{ key: "", value: "" }]);
+  const [body, setBody] = useState("");
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('headers');
-  const [params, setParams] = useState([{ key: '', value: '', enabled: true }]);
-  const [bodyMode, setBodyMode] = useState('raw');
-  const [authType, setAuthType] = useState('none');
-  const [auth, setAuth] = useState({ token: '', username: '', password: '', apiKey: '', apiKeyValue: '', apiKeyIn: 'header' });
+  const [params, setParams] = useState([{ key: "", value: "", enabled: true }]);
+  const [bodyMode, setBodyMode] = useState("raw");
+  const [authType, setAuthType] = useState("none");
+  const [activeTab, setActiveTab] = useState("headers");
+  const [auth, setAuth] = useState({
+    token: "",
+    username: "",
+    password: "",
+    apiKey: "",
+    apiKeyValue: "",
+    apiKeyIn: "header",
+  });
 
   useEffect(() => {
-    if (!selectedRequest) {
-      return;
-    }
-    setName(selectedRequest.name || '');
-    setMethod(selectedRequest.method || 'GET');
-    setURL(selectedRequest.url || '');
-    setBody(selectedRequest.body || '');
-    setAuthType(selectedRequest.auth?.type || 'none');
+    if (!selectedRequest) return;
+    setName(selectedRequest.name || "");
+    setMethod(selectedRequest.method || "GET");
+    setURL(selectedRequest.url || "");
+    setBody(selectedRequest.body || "");
+    setAuthType(selectedRequest.auth?.type || "none");
     setAuth({
-      token: selectedRequest.auth?.token || '',
-      username: selectedRequest.auth?.username || '',
-      password: selectedRequest.auth?.password || '',
-      apiKey: selectedRequest.auth?.api_key || '',
-      apiKeyValue: selectedRequest.auth?.api_key_value || '',
-      apiKeyIn: selectedRequest.auth?.api_key_in || 'header',
+      token: selectedRequest.auth?.token || "",
+      username: selectedRequest.auth?.username || "",
+      password: selectedRequest.auth?.password || "",
+      apiKey: selectedRequest.auth?.api_key || "",
+      apiKeyValue: selectedRequest.auth?.api_key_value || "",
+      apiKeyIn: selectedRequest.auth?.api_key_in || "header",
     });
-    const hydratedHeaders = Object.entries(selectedRequest.headers || {}).map(([key, value]) => ({ key, value }));
-    setHeaders(hydratedHeaders.length > 0 ? hydratedHeaders : [{ key: '', value: '' }]);
+    const hydrated = Object.entries(selectedRequest.headers || {}).map(
+      ([k, v]) => ({ key: k, value: v }),
+    );
+    setHeaders(hydrated.length > 0 ? hydrated : [{ key: "", value: "" }]);
+    setResponse(null);
   }, [selectedRequest]);
 
-  const applyEnvironment = (value) => {
-    let output = value;
-    Object.keys(selectedEnvironmentVariables || {}).forEach((key) => {
-      output = output.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(selectedEnvironmentVariables[key]));
-    });
-    return output;
-  };
+  const envVars = selectedEnvironment?.variables || {};
 
-  const mapHeaders = () => {
-    const mapped = {};
-    headers.forEach((header) => {
-      if (header.key.trim()) {
-        mapped[applyEnvironment(header.key.trim())] = applyEnvironment(header.value.trim());
-      }
+  const applyEnv = useCallback(
+    (val) => {
+      let out = val;
+      Object.keys(envVars).forEach((k) => {
+        out = out.replace(
+          new RegExp(`\\{\\{${k}\\}\\}`, "g"),
+          String(envVars[k]),
+        );
+      });
+      return out;
+    },
+    [envVars],
+  );
+
+  const mapHeaders = useCallback(() => {
+    const m = {};
+    headers.forEach((h) => {
+      if (h.key.trim()) m[applyEnv(h.key.trim())] = applyEnv(h.value.trim());
     });
-    return mapped;
-  };
+    return m;
+  }, [headers, applyEnv]);
 
   const effectiveURL = useMemo(() => {
-    const baseURL = applyEnvironment(url);
-    const activeParams = params.filter((param) => param.enabled && param.key.trim());
-    if (activeParams.length === 0) {
-      return baseURL;
-    }
-    const separator = baseURL.includes('?') ? '&' : '?';
-    const query = activeParams
-      .map((param) => `${encodeURIComponent(applyEnvironment(param.key.trim()))}=${encodeURIComponent(applyEnvironment(param.value.trim()))}`)
-      .join('&');
-    return `${baseURL}${separator}${query}`;
-  }, [params, url, selectedEnvironmentVariables]);
+    const base = applyEnv(url);
+    const active = params.filter((p) => p.enabled && p.key.trim());
+    if (active.length === 0) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    const qs = active
+      .map(
+        (p) =>
+          `${encodeURIComponent(applyEnv(p.key.trim()))}=${encodeURIComponent(applyEnv(p.value.trim()))}`,
+      )
+      .join("&");
+    return `${base}${sep}${qs}`;
+  }, [params, url, applyEnv]);
 
-  const upsertRequest = async () => {
-    const mappedHeaders = mapHeaders();
-    const mappedURL = effectiveURL;
-    const mappedBody = applyEnvironment(body);
+  const upsertRequest = useCallback(async () => {
+    const h = mapHeaders();
+    const u = effectiveURL;
+    const b = applyEnv(body);
     if (selectedRequest?.id) {
       const updated = await api.UpdateRequest(
         selectedRequest.id,
-        name || selectedRequest.name || 'Request',
+        name || selectedRequest.name,
         method,
-        mappedURL,
-        mappedHeaders,
-        mappedBody,
-        ''
+        u,
+        h,
+        b,
+        "",
       );
-      await api.SetRequestAuth(updated.id, authType, auth.token, auth.username, auth.password, auth.apiKey, auth.apiKeyValue, auth.apiKeyIn);
+      await api.SetRequestAuth(
+        updated.id,
+        authType,
+        auth.token,
+        auth.username,
+        auth.password,
+        auth.apiKey,
+        auth.apiKeyValue,
+        auth.apiKeyIn,
+      );
       return updated;
     }
-    const created = await api.CreateRequest(collection.id, name || 'New Request', method, mappedURL, mappedHeaders, mappedBody, '');
-    await api.SetRequestAuth(created.id, authType, auth.token, auth.username, auth.password, auth.apiKey, auth.apiKeyValue, auth.apiKeyIn);
-    onSelectRequest(created);
+    if (!selectedCollection?.id) throw new Error("No collection selected");
+    const created = await api.CreateRequest(
+      selectedCollection.id,
+      name || "New Request",
+      method,
+      u,
+      h,
+      b,
+      "",
+    );
+    await api.SetRequestAuth(
+      created.id,
+      authType,
+      auth.token,
+      auth.username,
+      auth.password,
+      auth.apiKey,
+      auth.apiKeyValue,
+      auth.apiKeyIn,
+    );
+    setSelectedRequest(created);
     return created;
-  };
+  }, [
+    selectedRequest,
+    selectedCollection,
+    name,
+    method,
+    effectiveURL,
+    mapHeaders,
+    body,
+    authType,
+    auth,
+    setSelectedRequest,
+    applyEnv,
+  ]);
 
-  const handleSendRequest = async () => {
+  const handleSend = useCallback(async () => {
     if (!url.trim()) {
-      alert(t('requestUrl'));
+      toast.error("Please enter a URL");
       return;
     }
+    setLoading(true);
     try {
-      setLoading(true);
-      const request = await upsertRequest();
-      const result = await api.ExecuteRequest(request.id);
+      const req = await upsertRequest();
+      const result = await api.ExecuteRequest(req.id);
       setResponse(result);
-      setActiveTab('response');
-      await onRefreshRequests();
-    } catch (error) {
-      alert(error.message);
+      setActiveTab("response");
+      toast.success(`${result.code || result.status} in ${result.time}ms`);
+      await refreshRequests();
+    } catch (e) {
+      toast.error(e.message || "Request failed");
     } finally {
       setLoading(false);
     }
-  };
+  }, [url, upsertRequest, refreshRequests]);
+
+  const handleSave = useCallback(async () => {
+    try {
+      await upsertRequest();
+      await refreshRequests();
+      toast.success("Request saved");
+    } catch (e) {
+      toast.error(e.message);
+    }
+  }, [upsertRequest, refreshRequests]);
 
   useEffect(() => {
-    const onKeyDown = (event) => {
-      const modifier = event.ctrlKey || event.metaKey;
-      if (modifier && event.key === 'Enter') {
-        event.preventDefault();
-        handleSendRequest();
+    const onKey = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === "Enter") {
+        e.preventDefault();
+        handleSend();
       }
-      if (modifier && event.key.toLowerCase() === 's') {
-        event.preventDefault();
-        upsertRequest().then(() => onRefreshRequests());
+      if (mod && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleSave();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [method, url, name, headers, body, authType, auth, selectedRequest, params, selectedEnvironmentVariables]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleSend, handleSave]);
 
   return (
-    <div className="request-editor">
-      <div className="toolbar">
-        <select value={method} onChange={(event) => setMethod(event.target.value)} className="method-select">
-          <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option><option>HEAD</option><option>OPTIONS</option>
-        </select>
-        <input type="text" value={name} onChange={(event) => setName(event.target.value)} placeholder={t('requestName')} className="url-input" />
-        <input type="url" value={url} onChange={(event) => setURL(event.target.value)} placeholder={t('requestUrl')} className="url-input" />
-        <button onClick={async () => { await upsertRequest(); await onRefreshRequests(); }} className="btn-send">{selectedRequest?.id ? t('updateRequest') : t('saveRequest')}</button>
-        <button onClick={handleSendRequest} disabled={loading} className="btn-send">{loading ? t('sending') : t('send')}</button>
+    <div className="flex flex-col h-full min-w-0 overflow-hidden">
+      {/* Request bar */}
+      <div className="flex flex-wrap items-center gap-3 p-4">
+        <MethodSelector value={method} onChange={setMethod} />
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("requestName")}
+          className="flex-1 min-w-[100px] max-w-[200px] h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+        />
+        <URLBar
+          url={url}
+          onChange={setURL}
+          onSend={handleSend}
+          onSave={handleSave}
+          loading={loading}
+        />
       </div>
 
-      <div className="tabs">
-        <button className={`tab ${activeTab === 'headers' ? 'active' : ''}`} onClick={() => setActiveTab('headers')}>{t('headers')}</button>
-        <button className={`tab ${activeTab === 'auth' ? 'active' : ''}`} onClick={() => setActiveTab('auth')}>{t('auth')}</button>
-        <button className={`tab ${activeTab === 'params' ? 'active' : ''}`} onClick={() => setActiveTab('params')}>{t('urlParams')}</button>
-        <button className={`tab ${activeTab === 'body' ? 'active' : ''}`} onClick={() => setActiveTab('body')}>{t('body')}</button>
-        <button className={`tab ${activeTab === 'response' ? 'active' : ''}`} onClick={() => setActiveTab('response')}>{t('response')}</button>
-      </div>
+      <Separator />
 
-      <div className="tab-content active">
-        {activeTab === 'headers' && <div className="headers-panel">{headers.map((header, index) => (
-          <div className="pair-row" key={`header-${index}`}>
-            <input value={header.key} onChange={(event) => { const updated = [...headers]; updated[index].key = event.target.value; setHeaders(updated); }} placeholder="Header Name" />
-            <input value={header.value} onChange={(event) => { const updated = [...headers]; updated[index].value = event.target.value; setHeaders(updated); }} placeholder="Header Value" />
-          </div>
-        ))}<button className="btn-send" onClick={() => setHeaders([...headers, { key: '', value: '' }])}>{t('addHeader')}</button></div>}
-        {activeTab === 'auth' && <div className="headers-panel">
-          <select value={authType} onChange={(event) => setAuthType(event.target.value)} className="method-select">
-            <option value="none">{t('noAuth')}</option><option value="bearer">{t('bearerToken')}</option><option value="basic">{t('basicAuth')}</option><option value="apikey">{t('apiKey')}</option>
-          </select>
-          {authType === 'bearer' && <input value={auth.token} onChange={(event) => setAuth({ ...auth, token: event.target.value })} className="url-input" placeholder="Token" />}
-          {authType === 'basic' && <><input value={auth.username} onChange={(event) => setAuth({ ...auth, username: event.target.value })} className="url-input" placeholder="Username" /><input value={auth.password} onChange={(event) => setAuth({ ...auth, password: event.target.value })} className="url-input" placeholder="Password" /></>}
-          {authType === 'apikey' && <><input value={auth.apiKey} onChange={(event) => setAuth({ ...auth, apiKey: event.target.value })} className="url-input" placeholder="API Key Name" /><input value={auth.apiKeyValue} onChange={(event) => setAuth({ ...auth, apiKeyValue: event.target.value })} className="url-input" placeholder="API Key Value" /><select value={auth.apiKeyIn} onChange={(event) => setAuth({ ...auth, apiKeyIn: event.target.value })} className="method-select"><option value="header">Header</option><option value="query">Query</option></select></>}
-        </div>}
-        {activeTab === 'params' && (
-          <div className="headers-panel">
-            {params.map((param, index) => (
-              <div className="pair-row" key={`param-${index}`}>
-                <input
-                  value={param.key}
-                  onChange={(event) => {
-                    const updated = [...params];
-                    updated[index].key = event.target.value;
-                    setParams(updated);
-                  }}
-                  placeholder={t('key')}
-                />
-                <input
-                  value={param.value}
-                  onChange={(event) => {
-                    const updated = [...params];
-                    updated[index].value = event.target.value;
-                    setParams(updated);
-                  }}
-                  placeholder={t('value')}
-                />
-                <input
-                  type="checkbox"
-                  checked={param.enabled}
-                  onChange={(event) => {
-                    const updated = [...params];
-                    updated[index].enabled = event.target.checked;
-                    setParams(updated);
-                  }}
-                />
-              </div>
-            ))}
-            <button className="btn-send" onClick={() => setParams([...params, { key: '', value: '', enabled: true }])}>{t('addParam')}</button>
-          </div>
-        )}
-        {activeTab === 'body' && (
-          <div className="headers-panel">
-            <select className="method-select" value={bodyMode} onChange={(event) => setBodyMode(event.target.value)}>
-              <option value="raw">{t('bodyModeRaw')}</option>
-              <option value="form">{t('bodyModeForm')}</option>
-              <option value="multipart">{t('bodyModeMultipart')}</option>
-              <option value="binary">{t('bodyModeBinary')}</option>
-            </select>
-            <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder={t('requestBody')} className="body-textarea" />
-          </div>
-        )}
-        {activeTab === 'response' && <div className="response-panel">{response ? <><div className="response-header"><span>{t('status')}: {response.status}</span><span>{t('time')}: {response.time}ms</span></div><pre className="response-body">{response.body || ''}</pre></> : <div className="no-response">{t('noResponse')}</div>}</div>}
-      </div>
+      {/* Tabs area */}
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="flex-1 flex flex-col min-h-0"
+      >
+        <TabsList className="mx-4 mt-3 w-fit">
+          <TabsTrigger value="headers" className="text-xs">
+            {t("headers")}
+          </TabsTrigger>
+          <TabsTrigger value="auth" className="text-xs">
+            {t("auth")}
+          </TabsTrigger>
+          <TabsTrigger value="params" className="text-xs">
+            {t("urlParams")}
+          </TabsTrigger>
+          <TabsTrigger value="body" className="text-xs">
+            {t("body")}
+          </TabsTrigger>
+          <TabsTrigger value="response" className="text-xs">
+            {t("response")}
+          </TabsTrigger>
+        </TabsList>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          <TabsContent value="headers">
+            <HeadersEditor headers={headers} onChange={setHeaders} />
+          </TabsContent>
+          <TabsContent value="auth">
+            <AuthEditor
+              authType={authType}
+              auth={auth}
+              onTypeChange={setAuthType}
+              onAuthChange={setAuth}
+            />
+          </TabsContent>
+          <TabsContent value="params">
+            <ParamsEditor params={params} onChange={setParams} />
+          </TabsContent>
+          <TabsContent value="body">
+            <BodyEditor
+              bodyMode={bodyMode}
+              body={body}
+              onModeChange={setBodyMode}
+              onBodyChange={setBody}
+            />
+          </TabsContent>
+          <TabsContent value="response" className="h-full">
+            <ResponseViewer response={response} />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }

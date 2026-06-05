@@ -90,7 +90,8 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/collections/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/collections/")
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.DeleteCollection(id))
+		data, err := appInstance.DeleteCollection(id)
+		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/collections/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/collections/")
@@ -157,7 +158,8 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/requests/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.DeleteRequest(id))
+		data, err := appInstance.DeleteRequest(id)
+		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/execute")
@@ -221,7 +223,8 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/environments/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/environments/")
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.DeleteEnvironment(id))
+		data, err := appInstance.DeleteEnvironment(id)
+		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/environments/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/environments/")

@@ -1,413 +1,308 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import './App.css';
-import Collections from './components/Collections';
-import RequestEditor from './components/RequestEditor';
-import EnvironmentManager from './components/EnvironmentManager';
-import RequestList from './components/RequestList';
-import HistoryPanel from './components/HistoryPanel';
-import { t } from './i18n';
-import { api } from './api';
-import { getAppService } from './bridge';
+import React, { useRef } from "react";
+import { useApp } from "@/context/AppContext";
+import { useTheme } from "@/context/ThemeContext";
+import { Button, Input, Separator, Badge } from "@/components/ui";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui";
+import { useResizablePanels } from "@/lib/useResizablePanels";
+import Collections from "@/components/Collections";
+import RequestEditor from "@/components/RequestEditor";
+import EnvironmentManager from "@/components/EnvironmentManager";
+import RequestList from "@/components/RequestList";
+import HistoryPanel from "@/components/HistoryPanel";
+import { t } from "@/i18n";
+import { api } from "@/api";
+import { Palette } from "lucide-react";
+import { toast } from "sonner";
+import "./App.css";
 
 function App() {
-  const [collections, setCollections] = useState([]);
-  const [selectedCollection, setSelectedCollection] = useState(null);
-  const [requests, setRequests] = useState([]);
-  const [selectedRequest, setSelectedRequest] = useState(null);
-  const [environments, setEnvironments] = useState([]);
-  const [selectedEnvironment, setSelectedEnvironment] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isCollectionsLoading, setIsCollectionsLoading] = useState(true);
-  const [isEnvironmentsLoading, setIsEnvironmentsLoading] = useState(true);
-  const [importMode, setImportMode] = useState('replace');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [loadingState, setLoadingState] = useState('');
-  const [lastRunReport, setLastRunReport] = useState(null);
+  const {
+    selectedCollection,
+    errorMessage,
+    loadingState,
+    lastRunReport,
+    bridgeMode,
+    searchQuery,
+    setSearchQuery,
+    setErrorMessage,
+    setLastRunReport,
+    searchRequests,
+    loadCollections,
+    loadEnvironments,
+    loadHistory,
+    runCollection,
+  } = useApp();
+
+  const { themeId, setThemeId, themeList } = useTheme();
+
   const importInputRef = useRef(null);
   const searchInputRef = useRef(null);
+  const [importModeState, setImportModeState] = React.useState("replace");
 
-  // Load collections on mount
-  useEffect(() => {
-    loadCollections();
-    loadEnvironments();
-    loadHistory();
-  }, []);
+  const { widths, getHandleProps, containerRef } = useResizablePanels(
+    [20, 55, 25],
+    [14, 30, 16],
+  );
 
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const modifier = event.ctrlKey || event.metaKey;
-      if (modifier && event.key.toLowerCase() === 'f') {
-        event.preventDefault();
+  React.useEffect(() => {
+    const onKey = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "f") {
+        e.preventDefault();
         searchInputRef.current?.focus();
       }
-      if (modifier && event.key.toLowerCase() === 'i') {
-        event.preventDefault();
+      if (mod && e.key.toLowerCase() === "i") {
+        e.preventDefault();
         importInputRef.current?.click();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const runWithStatus = async (label, handler, shouldSetLoading = true) => {
-    if (shouldSetLoading) {
-      setLoadingState(label);
-    }
-    setErrorMessage('');
-    try {
-      return await handler();
-    } catch (error) {
-      setErrorMessage(error.message || String(error));
-      throw error;
-    } finally {
-      if (shouldSetLoading) {
-        setLoadingState('');
+  // Toast on collection run complete
+  React.useEffect(() => {
+    if (lastRunReport) {
+      const { total, passed, failed } = lastRunReport;
+      if (failed === 0) {
+        toast.success(
+          `Collection run complete \u2014 ${passed}/${total} passed`,
+        );
+      } else {
+        toast.error(
+          `Collection run complete \u2014 ${passed} passed, ${failed} failed`,
+        );
       }
     }
-  };
+  }, [lastRunReport]);
 
-  const loadCollections = async () => {
-    setIsCollectionsLoading(true);
+  const handleImport = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
     try {
-      const result = await runWithStatus('collections', () => api.GetCollections(), false);
-      setCollections(result || []);
-    } catch (error) {
-      console.error('Error loading collections:', error);
-    } finally {
-      setIsCollectionsLoading(false);
-    }
-  };
-
-  const loadEnvironments = async () => {
-    setIsEnvironmentsLoading(true);
-    try {
-      const result = await runWithStatus('environments', () => api.GetEnvironments(), false);
-      setEnvironments(result || []);
-    } catch (error) {
-      console.error('Error loading environments:', error);
-    } finally {
-      setIsEnvironmentsLoading(false);
-    }
-  };
-
-  const loadRequests = async (collectionId) => {
-    try {
-      const result = await runWithStatus('requests', () => api.GetRequestsForCollection(collectionId), false);
-      setRequests(result || []);
-      setSelectedRequest(null);
-    } catch (error) {
-      console.error('Error loading requests:', error);
-    }
-  };
-
-  const loadHistory = async () => {
-    try {
-      const result = await runWithStatus('history', () => api.GetHistory(), false);
-      setHistory(result || []);
-    } catch (error) {
-      console.error('Error loading history:', error);
-    }
-  };
-
-  const handleSelectCollection = (collection) => {
-    setSelectedCollection(collection);
-    loadRequests(collection.id);
-  };
-
-  const handleCreateCollection = async (name) => {
-    try {
-      await runWithStatus('createCollection', () => api.CreateCollection(name));
-      loadCollections();
-    } catch (error) {
-      console.error('Error creating collection:', error);
-    }
-  };
-
-  const handleDeleteCollection = async (id) => {
-    try {
-      await runWithStatus('deleteCollection', () => api.DeleteCollection(id));
-      loadCollections();
-      if (selectedCollection?.id === id) {
-        setSelectedCollection(null);
-        setRequests([]);
-      }
-      if (selectedRequest?.collection_id === id) {
-        setSelectedRequest(null);
-      }
-    } catch (error) {
-      console.error('Error deleting collection:', error);
-    }
-  };
-
-  const handleUpdateCollection = async (id, name) => {
-    try {
-      await runWithStatus('updateCollection', () => api.UpdateCollection(id, name));
-      await loadCollections();
-    } catch (error) {
-      console.error('Error updating collection:', error);
-    }
-  };
-
-  const handleCreateEnvironment = async (name) => {
-    try {
-      await runWithStatus('createEnvironment', () => api.CreateEnvironment(name, {}));
-      loadEnvironments();
-    } catch (error) {
-      console.error('Error creating environment:', error);
-    }
-  };
-
-  const handleDeleteEnvironment = async (id) => {
-    try {
-      await runWithStatus('deleteEnvironment', () => api.DeleteEnvironment(id));
-      loadEnvironments();
-    } catch (error) {
-      console.error('Error deleting environment:', error);
-    }
-  };
-
-  const handleUpdateEnvironment = async (id, name, variables) => {
-    try {
-      await runWithStatus('updateEnvironment', () => api.UpdateEnvironment(id, name, variables));
-      await loadEnvironments();
-    } catch (error) {
-      console.error('Error updating environment:', error);
-    }
-  };
-
-  const handleSearchRequests = async () => {
-    try {
-      const result = await runWithStatus('search', () => api.SearchRequests(searchQuery), false);
-      setRequests(result || []);
-    } catch (error) {
-      console.error('Error searching requests:', error);
-    }
-  };
-
-  const handleImportData = async (event) => {
-    try {
-      const file = event?.target?.files?.[0];
-      if (!file) {
-        return;
-      }
       const raw = await file.text();
       const data = JSON.parse(raw);
-      const result = await runWithStatus('import', () => api.ImportDataContent(data, importMode));
-      if (importMode === 'preview') {
-        alert(`${t('runSummary')}: collections ${result.collections}, requests ${result.requests}, environments ${result.environments}, history ${result.history}`);
+      const result = await api.ImportDataContent(data, importModeState);
+      if (importModeState === "preview") {
+        toast.info(
+          `Preview: ${result.collections} collections, ${result.requests} requests, ${result.environments} environments, ${result.history} history entries`,
+          { duration: 5000 },
+        );
       } else {
         await loadCollections();
         await loadEnvironments();
         await loadHistory();
-        if (selectedCollection?.id) {
-          await loadRequests(selectedCollection.id);
-        }
-        alert(t('importSuccess'));
+        toast.success(t("importSuccess"));
       }
-    } catch (error) {
-      alert(`${t('importFailed')}: ${error.message}`);
+    } catch (err) {
+      toast.error(`${t("importFailed")}: ${err.message}`);
     } finally {
-      if (event?.target) {
-        event.target.value = '';
-      }
+      if (e?.target) e.target.value = "";
     }
   };
 
-  const handleExportData = async () => {
+  const handleExport = async () => {
     try {
-      const data = await runWithStatus('export', () => api.ExportDataContent());
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const anchor = document.createElement('a');
-      anchor.href = URL.createObjectURL(blob);
-      anchor.download = `gopost-export-${timestamp}.json`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      URL.revokeObjectURL(anchor.href);
-      anchor.remove();
-      alert(t('exportSuccess'));
-    } catch (error) {
-      alert(`${t('exportFailed')}: ${error.message}`);
+      const data = await api.ExportDataContent();
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `gopost-export-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(a.href);
+      a.remove();
+      alert(t("exportSuccess"));
+    } catch (err) {
+      toast.error(`${t("exportFailed")}: ${err.message}`);
     }
   };
-
-  const handleRunCollection = async () => {
-    if (!selectedCollection?.id) {
-      return;
-    }
-    try {
-      const report = await runWithStatus('runCollection', () => api.RunCollection(selectedCollection.id, false));
-      setLastRunReport(report);
-      await loadHistory();
-      await loadRequests(selectedCollection.id);
-    } catch (error) {
-      console.error('Error running collection:', error);
-    }
-  };
-
-  const selectedRequestId = selectedRequest?.id;
-  const selectedEnvironmentId = selectedEnvironment?.id;
-  const selectedEnvironmentVariables = useMemo(() => {
-    if (!selectedEnvironment) {
-      return {};
-    }
-    return selectedEnvironment.variables || {};
-  }, [selectedEnvironment]);
 
   return (
-    <div className="app">
-      <div className="sidebar">
-        <div className="sidebar-header">
-          <h1>{t('appTitle')}</h1>
+    <div className="flex h-screen bg-background text-foreground">
+      {/* Sidebar */}
+      <div className="w-64 bg-sidebar border-r flex flex-col shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h1 className="text-base font-bold tracking-tight">GoPost</h1>
+          <Select value={themeId} onValueChange={setThemeId}>
+            <SelectTrigger className="w-[130px] h-7 text-xs">
+              <Palette className="h-3 w-3 mr-1" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {themeList.map((t) => (
+                <SelectItem key={t.id} value={t.id} className="text-xs">
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <Collections
-          collections={collections}
-          selectedCollection={selectedCollection}
-          isLoading={isCollectionsLoading}
-          onSelectCollection={handleSelectCollection}
-          onCreateCollection={handleCreateCollection}
-          onDeleteCollection={handleDeleteCollection}
-          onUpdateCollection={handleUpdateCollection}
-        />
-
-        <EnvironmentManager
-          environments={environments}
-          selectedEnvironment={selectedEnvironment}
-          isLoading={isEnvironmentsLoading}
-          onSelectEnvironment={setSelectedEnvironment}
-          onCreateEnvironment={handleCreateEnvironment}
-          onDeleteEnvironment={handleDeleteEnvironment}
-          onUpdateEnvironment={handleUpdateEnvironment}
-        />
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <Collections />
+          <Separator />
+          <EnvironmentManager />
+        </div>
       </div>
 
-      <div className="main-content">
+      {/* Main area */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Error banner */}
         {errorMessage && (
-          <div className="error-banner">
-            <span>{errorMessage}</span>
-            <div className="inline-actions">
-              <button className="btn-send" onClick={() => setErrorMessage('')}>{t('dismiss')}</button>
-              <button className="btn-send" onClick={() => { loadCollections(); loadEnvironments(); loadHistory(); }}>{t('retry')}</button>
-            </div>
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-destructive/15 border-b">
+            <span className="text-sm flex-1 truncate">{errorMessage}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setErrorMessage("")}
+            >
+              {t("dismiss")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                loadCollections();
+                loadEnvironments();
+                loadHistory();
+              }}
+            >
+              {t("retry")}
+            </Button>
           </div>
         )}
-        <div className="top-actions">
-          <input
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b">
+          <Input
             ref={searchInputRef}
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                handleSearchRequests();
-              }
-            }}
-            placeholder={t('searchPlaceholder')}
-            className="url-input"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchRequests()}
+            placeholder={t("searchPlaceholder")}
+            className="flex-1 min-w-[180px] max-w-sm h-8 text-sm"
           />
-          <button className="btn-send" onClick={handleSearchRequests}>
-            {t('search')}
-          </button>
+          <Button variant="outline" size="sm" onClick={searchRequests}>
+            {t("search")}
+          </Button>
+
           <input
             ref={importInputRef}
             type="file"
             accept=".json,application/json"
-            className="hidden-file-input"
-            onChange={handleImportData}
+            className="hidden"
+            onChange={handleImport}
           />
-          <button className="btn-send" onClick={() => importInputRef.current?.click()}>
-            {t('import')}
-          </button>
-          <select value={importMode} className="method-select" onChange={(event) => setImportMode(event.target.value)}>
-            <option value="replace">{t('importReplace')}</option>
-            <option value="merge">{t('importMerge')}</option>
-            <option value="preview">{t('importPreview')}</option>
-          </select>
-          <button className="btn-send" onClick={handleExportData}>
-            {t('export')}
-          </button>
-          <button className="btn-send" onClick={handleRunCollection} disabled={!selectedCollection}>
-            {t('runCollection')}
-          </button>
-          <span className="bridge-state">
-            {t('bridgeMode')}: {getAppService() ? t('bridgeNative') : t('bridgeFallback')}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importInputRef.current?.click()}
+          >
+            {t("import")}
+          </Button>
+
+          <Select value={importModeState} onValueChange={setImportModeState}>
+            <SelectTrigger className="w-[110px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="replace">{t("importReplace")}</SelectItem>
+              <SelectItem value="merge">{t("importMerge")}</SelectItem>
+              <SelectItem value="preview">{t("importPreview")}</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            {t("export")}
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={runCollection}
+            disabled={!selectedCollection}
+          >
+            {t("runCollection")}
+          </Button>
+
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            {bridgeMode === "native" ? t("bridgeNative") : t("bridgeFallback")}
           </span>
-          {loadingState && <span className="bridge-state">{t('loading')}</span>}
+
+          {loadingState && (
+            <Badge variant="secondary" className="text-[10px]">
+              {t("loading")}
+            </Badge>
+          )}
         </div>
+
+        {/* Run report */}
         {lastRunReport && (
-          <div className="run-report">
-            <span>{t('runSummary')}: total {lastRunReport.total}, passed {lastRunReport.passed}, failed {lastRunReport.failed}</span>
+          <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs text-muted-foreground">
+            <span>
+              {t("runSummary")}: <strong>{lastRunReport.total}</strong> total,{" "}
+              <strong className="text-green-400">{lastRunReport.passed}</strong>{" "}
+              passed,{" "}
+              <strong className="text-red-400">{lastRunReport.failed}</strong>{" "}
+              failed
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs ml-auto"
+              onClick={() => setLastRunReport(null)}
+            >
+              {t("dismiss")}
+            </Button>
           </div>
         )}
-        {selectedCollection ? (
-          <div className="workspace-grid">
-            <RequestList
-              collection={selectedCollection}
-              requests={requests}
-              selectedRequestId={selectedRequestId}
-              onSelectRequest={setSelectedRequest}
-              onRefreshRequests={() => loadRequests(selectedCollection.id)}
-              onDuplicateRequest={async (requestID) => {
-                await api.DuplicateRequest(requestID);
-                await loadRequests(selectedCollection.id);
-              }}
-              onDeleteRequest={async (requestID) => {
-                await api.DeleteRequest(requestID);
-                await loadRequests(selectedCollection.id);
-                if (selectedRequest?.id === requestID) {
-                  setSelectedRequest(null);
-                }
-              }}
-              onMoveRequest={async (requestID, targetCollectionID) => {
-                await api.MoveRequest(requestID, targetCollectionID);
-                await loadRequests(selectedCollection.id);
-              }}
-              collections={collections}
-            />
-            <RequestEditor
-              collection={selectedCollection}
-              selectedRequest={selectedRequest}
-              selectedEnvironmentId={selectedEnvironmentId}
-              selectedEnvironmentVariables={selectedEnvironmentVariables}
-              onSelectRequest={setSelectedRequest}
-              onRefreshRequests={async () => {
-                await loadRequests(selectedCollection.id);
-                await loadHistory();
-              }}
-            />
-            <HistoryPanel
-              history={history}
-              onReplay={async (entryID) => {
-                await api.ReplayHistoryEntry(entryID);
-                await loadHistory();
-              }}
-              onOpenInEditor={(entry) => {
-                const request = {
-                  id: entry.request_id || `history-${entry.id}`,
-                  name: entry.request_name || entry.url,
-                  method: entry.method,
-                  url: entry.url,
-                  headers: entry.request_headers || {},
-                  body: entry.request_body || '',
-                  auth: entry.request_auth || { type: 'none' },
-                  collection_id: entry.collection_id,
-                };
-                if (!selectedCollection || selectedCollection.id !== entry.collection_id) {
-                  const match = collections.find((collection) => collection.id === entry.collection_id);
-                  if (match) {
-                    setSelectedCollection(match);
-                  }
-                }
-                setSelectedRequest(request);
-              }}
-            />
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p>{t('selectCollection')}</p>
-          </div>
-        )}
+
+        {/* Content area with resizable panels */}
+        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+          {selectedCollection ? (
+            <div ref={containerRef} className="flex h-full w-full">
+              <div
+                style={{ width: `${widths[0]}%` }}
+                className="h-full min-w-0 border-r"
+              >
+                <RequestList />
+              </div>
+              <div
+                {...getHandleProps(0)}
+                className="w-1.5 shrink-0 bg-border hover:bg-primary/50 active:bg-primary cursor-col-resize transition-colors"
+              />
+              <div
+                style={{ width: `${widths[1]}%` }}
+                className="h-full min-w-0"
+              >
+                <RequestEditor />
+              </div>
+              <div
+                {...getHandleProps(1)}
+                className="w-1.5 shrink-0 bg-border hover:bg-primary/50 active:bg-primary cursor-col-resize transition-colors"
+              />
+              <div
+                style={{ width: `${widths[2]}%` }}
+                className="h-full min-w-0 border-l"
+              >
+                <HistoryPanel />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <p className="text-lg">{t("selectCollection")}</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

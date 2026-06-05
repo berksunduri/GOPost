@@ -1,130 +1,248 @@
-import React, { useState } from 'react';
-import { t } from '../i18n';
+import React, { useState } from "react";
+import { useApp } from "@/context/AppContext";
+import {
+  Button,
+  Input,
+  ScrollArea,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui";
+import { Plus, Trash2, Globe, PlusCircle } from "lucide-react";
+import { t } from "@/i18n";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-function EnvironmentManager({ environments, selectedEnvironment, isLoading, onSelectEnvironment, onCreateEnvironment, onDeleteEnvironment, onUpdateEnvironment }) {
-  const [showModal, setShowModal] = useState(false);
-  const [envName, setEnvName] = useState('');
+function EnvironmentManager() {
+  const {
+    environments,
+    selectedEnvironment,
+    isLoading,
+    setSelectedEnvironmentId,
+    createEnvironment,
+    deleteEnvironment,
+    updateEnvironment,
+  } = useApp();
+
+  const [showDialog, setShowDialog] = useState(false);
+  const [dialogName, setDialogName] = useState("");
   const [editorVariables, setEditorVariables] = useState([]);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const openCreate = () => {
+    setDialogName("");
+    setShowDialog(true);
+  };
 
   const handleCreate = () => {
-    if (envName.trim()) {
-      onCreateEnvironment(envName);
-      setEnvName('');
-      setShowModal(false);
-    }
+    const trimmed = dialogName.trim();
+    if (!trimmed) return;
+    createEnvironment(trimmed);
+    setShowDialog(false);
+    toast.success(`Created environment "${trimmed}"`);
   };
 
-  const handleSelectEnvironment = (environment) => {
-    onSelectEnvironment(environment);
-    const pairs = Object.entries(environment.variables || {}).map(([key, value]) => ({ key, value: String(value), enabled: true }));
-    setEditorVariables(pairs.length > 0 ? pairs : [{ key: '', value: '', enabled: true }]);
+  const handleSelect = (env) => {
+    setSelectedEnvironmentId(env.id);
+    const pairs = Object.entries(env.variables || {}).map(([k, v]) => ({
+      key: k,
+      value: String(v),
+      enabled: true,
+    }));
+    setEditorVariables(
+      pairs.length > 0 ? pairs : [{ key: "", value: "", enabled: true }],
+    );
   };
 
-  const handleSaveEnvironment = () => {
-    if (!selectedEnvironment) {
-      return;
-    }
-    const variables = {};
+  const handleSave = () => {
+    if (!selectedEnvironment) return;
+    const vars = {};
     editorVariables.forEach((item) => {
-      if (item.enabled && item.key.trim()) {
-        variables[item.key.trim()] = item.value;
-      }
+      if (item.enabled && item.key.trim()) vars[item.key.trim()] = item.value;
     });
-    onUpdateEnvironment(selectedEnvironment.id, selectedEnvironment.name, variables);
+    updateEnvironment(selectedEnvironment.id, selectedEnvironment.name, vars);
+    toast.success(`Saved "${selectedEnvironment.name}"`);
   };
 
   return (
-    <div className="sidebar-section">
-      <div className="sidebar-section-title">
-        {t('envVariables')}
-        <button className="btn-small" onClick={() => setShowModal(true)}>+</button>
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2">
+        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+          {t("envVariables")}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={openCreate}
+          className="h-6 w-6"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
-      {environments.length === 0 ? (
-        <div className="empty-section">{isLoading ? t('loading') : t('noEnvironmentsYet')}</div>
-      ) : (
-        environments.map(env => (
-          <div
-            key={env.id}
-            className={`collection-item ${selectedEnvironment?.id === env.id ? 'active' : ''}`}
-            onClick={() => handleSelectEnvironment(env)}
-          >
-            <span>{env.name}</span>
-            <button
-              className="btn-delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(`${t('delete')} "${env.name}"?`)) {
-                  onDeleteEnvironment(env.id);
-                }
-              }}
-            >
-              ×
-            </button>
+      <ScrollArea className="px-2 max-h-28">
+        {environments.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-4 text-center">
+            {isLoading.environments ? t("loading") : t("noEnvironmentsYet")}
           </div>
-        ))
-      )}
+        ) : (
+          <div className="space-y-0.5">
+            {environments.map((env) => {
+              const isActive = selectedEnvironment?.id === env.id;
+              return (
+                <div key={env.id} className="group relative">
+                  <button
+                    onClick={() => handleSelect(env)}
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm text-left transition-colors",
+                      isActive
+                        ? "bg-primary/20 text-foreground font-medium"
+                        : "hover:bg-accent text-foreground/80",
+                    )}
+                  >
+                    <Globe
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        isActive ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                    <span className="truncate flex-1">{env.name}</span>
+                  </button>
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDelete(env);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ScrollArea>
 
+      {/* Variable editor */}
       {selectedEnvironment && (
-        <div className="env-editor">
-          <div className="sidebar-section-title">{t('envName')}: {selectedEnvironment.name}</div>
-          {editorVariables.map((item, index) => (
-            <div className="pair-row" key={`env-var-${index}`}>
-              <input
+        <div className="px-3 py-3 border-t space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-foreground/90 truncate">
+              {selectedEnvironment.name}
+            </span>
+          </div>
+          {editorVariables.map((item, i) => (
+            <div key={i} className="flex gap-1.5 items-center">
+              <Input
                 value={item.key}
-                onChange={(event) => {
-                  const updated = [...editorVariables];
-                  updated[index].key = event.target.value;
-                  setEditorVariables(updated);
+                onChange={(e) => {
+                  const next = [...editorVariables];
+                  next[i] = { ...next[i], key: e.target.value };
+                  setEditorVariables(next);
                 }}
-                placeholder={t('key')}
+                placeholder={t("key")}
+                className="h-7 text-xs flex-1"
               />
-              <input
+              <Input
                 value={item.value}
-                onChange={(event) => {
-                  const updated = [...editorVariables];
-                  updated[index].value = event.target.value;
-                  setEditorVariables(updated);
+                onChange={(e) => {
+                  const next = [...editorVariables];
+                  next[i] = { ...next[i], value: e.target.value };
+                  setEditorVariables(next);
                 }}
-                placeholder={t('value')}
+                placeholder={t("value")}
+                className="h-7 text-xs flex-1"
               />
               <input
                 type="checkbox"
                 checked={item.enabled}
-                onChange={(event) => {
-                  const updated = [...editorVariables];
-                  updated[index].enabled = event.target.checked;
-                  setEditorVariables(updated);
+                onChange={(e) => {
+                  const next = [...editorVariables];
+                  next[i] = { ...next[i], enabled: e.target.checked };
+                  setEditorVariables(next);
                 }}
+                className="shrink-0 h-3.5 w-3.5"
               />
             </div>
           ))}
-          <div className="inline-actions">
-            <button className="btn-send" onClick={() => setEditorVariables([...editorVariables, { key: '', value: '', enabled: true }])}>{t('addVariable')}</button>
-            <button className="btn-send" onClick={handleSaveEnvironment}>{t('saveEnvironment')}</button>
+          <div className="flex gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() =>
+                setEditorVariables([
+                  ...editorVariables,
+                  { key: "", value: "", enabled: true },
+                ])
+              }
+            >
+              <PlusCircle className="h-3 w-3 mr-1" />
+              {t("addVariable")}
+            </Button>
+            <Button size="sm" className="text-xs h-7" onClick={handleSave}>
+              {t("saveEnvironment")}
+            </Button>
           </div>
         </div>
       )}
 
-      {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Create Environment</h2>
-            <input
-              type="text"
-              placeholder={t('envName')}
-              value={envName}
-              onChange={(e) => setEnvName(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleCreate()}
-              autoFocus
-            />
-            <div className="modal-buttons">
-              <button onClick={() => setShowModal(false)}>{t('dismiss')}</button>
-              <button onClick={handleCreate}>{t('saveEnvironment')}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Create Environment</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={dialogName}
+            onChange={(e) => setDialogName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+            placeholder={t("envName")}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDialog(false)}>
+              {t("dismiss")}
+            </Button>
+            <Button onClick={handleCreate}>{t("saveEnvironment")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!confirmDelete}
+        onOpenChange={() => setConfirmDelete(null)}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {t("delete")} &quot;{confirmDelete?.name}&quot;?
+            </DialogTitle>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+              {t("dismiss")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const name = confirmDelete.name;
+                deleteEnvironment(confirmDelete.id);
+                setConfirmDelete(null);
+                toast.success(`Deleted "${name}"`);
+              }}
+            >
+              {t("delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

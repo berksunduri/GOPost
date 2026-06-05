@@ -81,8 +81,9 @@ func (a *App) UpdateCollection(id string, name string) (*models.Collection, erro
 }
 
 // DeleteCollection deletes a collection
-func (a *App) DeleteCollection(id string) error {
-	return a.storage.DeleteCollection(id)
+func (a *App) DeleteCollection(id string) (map[string]bool, error) {
+	err := a.storage.DeleteCollection(id)
+	return map[string]bool{"ok": true}, err
 }
 
 // ==================== Requests ====================
@@ -211,8 +212,9 @@ func (a *App) SetRequestAuth(id string, authType string, token string, username 
 }
 
 // DeleteRequest deletes a request
-func (a *App) DeleteRequest(id string) error {
-	return a.storage.DeleteRequest(id)
+func (a *App) DeleteRequest(id string) (map[string]bool, error) {
+	err := a.storage.DeleteRequest(id)
+	return map[string]bool{"ok": true}, err
 }
 
 // ExecuteRequest executes an HTTP request and returns the response
@@ -357,8 +359,9 @@ func (a *App) UpdateEnvironment(id string, name string, variables map[string]int
 }
 
 // DeleteEnvironment deletes an environment
-func (a *App) DeleteEnvironment(id string) error {
-	return a.storage.DeleteEnvironment(id)
+func (a *App) DeleteEnvironment(id string) (map[string]bool, error) {
+	err := a.storage.DeleteEnvironment(id)
+	return map[string]bool{"ok": true}, err
 }
 
 func (a *App) GetHistory() ([]models.HistoryEntry, error) {
