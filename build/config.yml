@@ -1,0 +1,40 @@
+version: "3"
+
+info:
+  companyName: "GoPost"
+  productName: "GoPost"
+  productIdentifier: "com.gopost.app"
+  description: "GoPost - Postman clone built with Go and Wails"
+  copyright: "(c) 2025, GoPost"
+  comments: "An educational Postman clone"
+  version: "1.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: debug
+  debounce: 700
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+      - data
+      - .github
+    file:
+      - .DS_Store
+      - .gitignore
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: ./dev-frontend.sh
+      type: background
+    - cmd: go build -o bin/GoPost .
+      type: blocking
+    - cmd: ./bin/GoPost
+      type: primary
+
+fileAssociations: []
+
+other: []

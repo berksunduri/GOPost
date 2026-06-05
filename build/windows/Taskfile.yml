@@ -1,0 +1,27 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application for Windows
+    deps:
+      - task: common:go:mod:tidy
+      - task: common:build:frontend
+    cmds:
+      - go build -o {{.BIN_DIR}}/{{.APP_NAME}}.exe .
+    env:
+      GOOS: windows
+
+  package:
+    summary: Packages a production build for Windows
+    deps:
+      - task: build
+    cmds:
+      - echo "Windows package: {{.BIN_DIR}}/{{.APP_NAME}}.exe"
+
+  run:
+    summary: Runs the application on Windows
+    cmds:
+      - ./{{.BIN_DIR}}/{{.APP_NAME}}.exe

@@ -1,0 +1,27 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application for Linux
+    deps:
+      - task: common:go:mod:tidy
+      - task: common:build:frontend
+    cmds:
+      - go build -o {{.BIN_DIR}}/{{.APP_NAME}} .
+    env:
+      GOOS: linux
+
+  package:
+    summary: Packages a production build for Linux
+    deps:
+      - task: build
+    cmds:
+      - echo "Linux package: {{.BIN_DIR}}/{{.APP_NAME}}"
+
+  run:
+    summary: Runs the application on Linux
+    cmds:
+      - ./{{.BIN_DIR}}/{{.APP_NAME}}
