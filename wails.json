@@ -10,12 +10,19 @@
   "build": {
     "appId": "com.gopost.app",
     "productName": "GoPost",
-    "outputFilename": "gopost",
+    "outputFilename": "GoPost",
+    "darwin": {
+      "icon": "build/darwin/icon.icns"
+    },
     "windows": {
       "icon": "build/windows/icon.ico"
     },
+    "linux": {
+      "icon": "build/linux/icon.png"
+    },
     "nsis": {
-      "onlyOnLanguageSelection": false
+      "onlyOnLanguageSelection": false,
+      "installDirectory": "$PROGRAMFILES\\GoPost"
     }
   }
 }

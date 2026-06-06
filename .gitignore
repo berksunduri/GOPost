@@ -43,6 +43,9 @@ bin/
 # Wails generated bindings (auto-generated)
 frontend/src/wailsjs/
 
-plans/
-
-data/
+# Generated app icons (built from SVG in CI)
+build/darwin/icon.icns
+build/darwin/icon.iconset/
+build/windows/icon.ico
+build/windows/icon.png
+build/linux/icon.png
