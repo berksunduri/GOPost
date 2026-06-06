@@ -100,7 +100,7 @@ jobs:
           path: bin/GoPost-*.dmg
 
   # ═══════════════════════════════════════════════════════════
-  #  macOS CLI
+  #  macOS CLI (arm64 + amd64 from one runner)
   # ═══════════════════════════════════════════════════════════
   build-macos-cli:
     name: Build macOS CLI
@@ -110,27 +110,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - name: Build CLI
+      - name: Build CLI (arm64)
         run: |
           GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o gopost ./cmd/gopost/
           tar -czf gopost-darwin-arm64.tar.gz gopost
+      - name: Build CLI (amd64)
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o gopost ./cmd/gopost/
+          tar -czf gopost-darwin-amd64.tar.gz gopost
       - uses: actions/upload-artifact@v4
         with:
           name: gopost-darwin-arm64
           path: gopost-darwin-arm64.tar.gz
-
-  build-macos-cli-intel:
-    name: Build macOS CLI (Intel)
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-      - name: Build CLI
-        run: |
-          GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o gopost ./cmd/gopost/
-          tar -czf gopost-darwin-amd64.tar.gz gopost
       - uses: actions/upload-artifact@v4
         with:
           name: gopost-darwin-amd64
@@ -228,7 +219,6 @@ jobs:
     needs:
       - build-macos
       - build-macos-cli
-      - build-macos-cli-intel
       - build-windows
       - build-windows-cli
       - build-linux-cli
