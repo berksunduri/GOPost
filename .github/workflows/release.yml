@@ -1,0 +1,183 @@
+# GoPost Release Workflow
+#
+# Triggered when a version tag is pushed (e.g., v1.0.0).
+# Builds CLI + GUI binaries for all platforms and publishes a GitHub Release.
+#
+# Also updates the Homebrew tap repo with the new version.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build CLI binaries for all platforms ──
+  build-cli:
+    name: Build CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: darwin-arm64
+            runner: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: darwin-amd64
+            runner: macos-13
+            goos: darwin
+            goarch: amd64
+          - os: linux-amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: linux-arm64
+            runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - os: windows-amd64
+            runner: windows-latest
+            goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build CLI
+        run: |
+          $ext = ""
+          if ("${{ matrix.goos }}" -eq "windows") { $ext = ".exe" }
+          $env:GOOS = "${{ matrix.goos }}"
+          $env:GOARCH = "${{ matrix.goarch }}"
+          go build -ldflags "-X main.version=${{ github.ref_name }}" -o "gopost$ext" ./cmd/gopost/
+        shell: pwsh
+
+      - name: Package
+        run: |
+          $name = "gopost-${{ matrix.os }}"
+          if ("${{ matrix.goos }}" -eq "windows") {
+            Compress-Archive -Path gopost.exe -DestinationPath "$name.zip"
+            echo "artifact=$name.zip" >> $env:GITHUB_ENV
+          } else {
+            tar -czf "$name.tar.gz" gopost
+            echo "artifact=$name.tar.gz" >> $env:GITHUB_ENV
+          }
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gopost-${{ matrix.os }}
+          path: ${{ env.artifact }}
+
+  # ── Build macOS GUI app ──
+  build-gui:
+    name: Build GUI (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v3/cmd/wails@latest
+
+      - name: Install frontend deps
+        run: cd frontend && npm install && cd ..
+
+      - name: Build frontend
+        run: cd frontend && npm run build && cd ..
+
+      - name: Build GoPost.app
+        run: go build -o bin/GoPost .
+        env:
+          CGO_ENABLED: 1
+
+      - name: Package as .app bundle
+        run: |
+          mkdir -p bin/GoPost.app/Contents/MacOS
+          mkdir -p bin/GoPost.app/Contents/Resources
+          cp bin/GoPost bin/GoPost.app/Contents/MacOS/
+          cd bin && tar -czf GoPost-darwin.tar.gz GoPost.app && cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoPost-macOS
+          path: bin/GoPost-darwin.tar.gz
+
+  # ── Create GitHub Release ──
+  release:
+    name: Create Release
+    needs: [build-cli, build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p dist
+          find release-artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} dist/ \;
+          ls -la dist/
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ github.ref_name }}
+          body: |
+            ## GoPost ${{ github.ref_name }}
+
+            ### Downloads
+
+            | Platform | Binary |
+            |----------|--------|
+            | macOS Apple Silicon | `gopost-darwin-arm64.tar.gz` |
+            | macOS Intel | `gopost-darwin-amd64.tar.gz` |
+            | Linux x86_64 | `gopost-linux-amd64.tar.gz` |
+            | Linux ARM64 | `gopost-linux-arm64.tar.gz` |
+            | Windows x86_64 | `gopost-windows-amd64.zip` |
+            | macOS GUI | `GoPost-darwin.tar.gz` |
+
+            ### CLI Quick Start
+            ```bash
+            # Extract and run
+            tar -xzf gopost-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz
+            ./gopost --version
+            ./gopost run --help
+            ```
+
+            ### Install via Homebrew
+            ```bash
+            brew tap berksunduri/gopost
+            brew install gopost
+            ```
+
+            ### Checksums
+            See `checksums.txt` in the assets below.
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}

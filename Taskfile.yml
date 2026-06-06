@@ -9,13 +9,24 @@ includes:
 vars:
   APP_NAME: "GoPost"
   BIN_DIR: "bin"
-  VITE_PORT: '34115'
+  VITE_PORT: "34115"
 
 tasks:
   build:
     summary: Builds the application
     cmds:
       - task: "{{OS}}:build"
+
+  build:cli:
+    summary: Builds just the CLI binary
+    cmds:
+      - task: common:build:cli
+
+  build:all:
+    summary: Builds both GUI app and CLI binary
+    cmds:
+      - task: "{{OS}}:build"
+      - task: common:build:cli
 
   package:
     summary: Packages a production build of the application

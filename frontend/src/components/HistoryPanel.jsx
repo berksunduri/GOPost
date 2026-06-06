@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, lazy, Suspense } from "react";
 import { useApp } from "@/context/AppContext";
 import { Button, ScrollArea, Badge } from "@/components/ui";
 import { RotateCcw, ExternalLink, Clock, Loader2 } from "lucide-react";
@@ -6,14 +6,13 @@ import { t } from "@/i18n";
 import { api } from "@/api";
 import { toast } from "sonner";
 
-function HistoryPanel() {
+function HistoryPanel({ width }) {
   const {
     history,
     collections,
     selectedCollectionId,
     setSelectedCollectionId,
-    setSelectedRequestId,
-    setVirtualRequest,
+    openTab,
     loadHistory,
     loadRequests,
   } = useApp();
@@ -43,7 +42,7 @@ function HistoryPanel() {
         loadRequests(match.id);
       }
     }
-    setVirtualRequest({
+    openTab({
       id: entry.request_id || `hist-${entry.id}`,
       name: entry.request_name || entry.url || "Request",
       method: entry.method,
@@ -53,7 +52,6 @@ function HistoryPanel() {
       auth: entry.request_auth || { type: "none" },
       collection_id: entry.collection_id,
     });
-    setSelectedRequestId(entry.request_id || `hist-${entry.id}`);
     toast.success("Loaded from history");
   };
 
@@ -61,46 +59,40 @@ function HistoryPanel() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-4">
         <Clock className="h-8 w-8 opacity-30" />
-        <p className="text-xs text-center">
-          No history yet.
-          <br />
-          Send a request to see it here.
-        </p>
+        <p className="text-xs text-center">No history yet.</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div
+      className="flex flex-col h-full min-h-0"
+      style={{ width: width || 280 }}
+    >
       <div className="flex items-center px-3 py-2.5 border-b shrink-0">
         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
           {t("history")} ({history.length})
         </span>
       </div>
-
       <ScrollArea className="flex-1">
         <div className="p-1.5 space-y-1">
           {history.map((entry) => {
             const statusCode = entry.code;
-            const isSuccess = statusCode >= 200 && statusCode < 300;
-            const isErr = statusCode >= 400;
             const isReplaying = replayingId === entry.id;
-
             return (
               <div
                 key={entry.id}
                 className="rounded-md hover:bg-accent/50 p-2 transition-colors"
               >
-                {/* Method + status + url */}
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-[10px] font-mono font-bold text-muted-foreground shrink-0 w-8">
                     {entry.method}
                   </span>
                   <Badge
                     variant={
-                      isSuccess
+                      statusCode >= 200 && statusCode < 300
                         ? "default"
-                        : isErr
+                        : statusCode >= 400
                           ? "destructive"
                           : "secondary"
                     }
@@ -112,16 +104,12 @@ function HistoryPanel() {
                     {entry.url}
                   </span>
                 </div>
-
-                {/* Time */}
                 <div className="flex items-center gap-1 mt-0.5">
                   <Clock className="h-3 w-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground">
                     {entry.time_ms}ms
                   </span>
                 </div>
-
-                {/* Action buttons — text labels, always visible, stacked if narrow */}
                 <div className="flex flex-wrap items-center gap-1 mt-1.5">
                   <Button
                     variant="outline"

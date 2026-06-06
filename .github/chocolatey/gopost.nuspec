@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GoPost Chocolatey Package Manifest -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>gopost</id>
+    <version>$version$</version>
+    <packageSourceUrl>https://github.com/berksunduri/GOPost/tree/main/.github/chocolatey</packageSourceUrl>
+    <owners>berksunduri</owners>
+    <title>GoPost</title>
+    <authors>Berksun Durukal</authors>
+    <projectUrl>https://github.com/berksunduri/GOPost</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/berksunduri/GOPost/main/.github/chocolatey/gopost-icon.png</iconUrl>
+    <licenseUrl>https://github.com/berksunduri/GOPost/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/berksunduri/GOPost</projectSourceUrl>
+    <docsUrl>https://github.com/berksunduri/GOPost#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/berksunduri/GOPost/issues</bugTrackerUrl>
+    <tags>gopost api rest graphql http client testing postman</tags>
+    <summary>A fast, native API client and test runner — an open-source Postman alternative</summary>
+    <description><![CDATA[
+# GoPost
+
+A fast, native API client and test runner built with Go + Wails + React.
+
+## Features
+
+- **All HTTP methods** — GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, GRAPHQL
+- **GraphQL first-class support** — schema introspection, query editor, variables
+- **`.http` file round-trip** — import/export compatible with VS Code REST Client
+- **CLI runner** — `gopost run` with JUnit/JSON reporters for CI/CD
+- **Git-friendly storage** — directory-per-collection, one-file-per-request
+- **Environments** — variable substitution in URLs, headers, and body
+- **Git integration** — built-in status, commit, push, pull
+
+## CLI Quick Start
+
+```cmd
+gopost run my-collection --reporter junit --output results.xml
+gopost run .\api.http --env production --parallel 4
+gopost watch .\api.http
+```
+    ]]></description>
+    <releaseNotes>https://github.com/berksunduri/GOPost/releases</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

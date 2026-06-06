@@ -127,6 +127,28 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.CreateRequest(id, payload.Name, payload.Method, payload.URL, payload.Headers, payload.Body, payload.Description)
 		writeJSON(w, data, err)
 		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/import-http"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/import-http")
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.ImportHTTPContent(payload.Content, id)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/export-http"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/export-http")
+		data, err := appInstance.ExportCollectionAsHTTPContent(id)
+		writeJSON(w, map[string]string{"content": data}, err)
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/export-http-file"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/export-http-file")
+		data, err := appInstance.ExportCollectionAsHTTPFile(id)
+		writeJSON(w, data, err)
+		return
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/run"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/run")
 		var payload struct {
@@ -201,6 +223,29 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.MoveRequest(id, payload.CollectionID)
 		writeJSON(w, data, err)
 		return
+
+	// GraphQL request sub-routes (must come before generic request handlers)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute-graphql"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/execute-graphql")
+		data, err := appInstance.ExecuteGraphQLRequest(id)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/graphql"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/graphql")
+		var payload struct {
+			Query         string `json:"query"`
+			Variables     string `json:"variables"`
+			OperationName string `json:"operationName"`
+			SchemaURL     string `json:"schemaURL"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.SetRequestGraphQL(id, payload.Query, payload.Variables, payload.OperationName, payload.SchemaURL)
+		writeJSON(w, data, err)
+		return
+
 	case r.Method == http.MethodGet && r.URL.Path == "/api/requests/search":
 		data, err := appInstance.SearchRequests(r.URL.Query().Get("q"))
 		writeJSON(w, data, err)
@@ -297,6 +342,72 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		default:
 			writeJSON(w, nil, errInvalidMode(payload.Mode))
 		}
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/reveal"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/reveal")
+		err := appInstance.RevealInFinder(id)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/storage-info":
+		writeJSON(w, appInstance.GetStorageInfo(), nil)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/term-port":
+		writeJSON(w, map[string]int{"port": appInstance.GetTerminalPort()}, nil)
+		return
+
+	// GraphQL introspection
+	case r.Method == http.MethodPost && r.URL.Path == "/api/graphql/introspect":
+		var payload struct {
+			URL string `json:"url"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.IntrospectGraphQLSchema(payload.URL)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/graphql/schema":
+		data, err := appInstance.GetCachedGraphQLSchema(r.URL.Query().Get("url"))
+		writeJSON(w, data, err)
+		return
+
+	// Git
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/init"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/init")
+		writeJSON(w, map[string]bool{"ok": true}, appInstance.GitInit(id))
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/status"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/status")
+		data, err := appInstance.GitStatus(id)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/commit"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/commit")
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true}, appInstance.GitCommit(id, payload.Message))
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/log"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/log")
+		data, err := appInstance.GitLog(id)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/exec":
+		var payload struct {
+			Command string `json:"command"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.ExecCommand(payload.Command)
+		writeJSON(w, data, err)
 		return
 	default:
 		w.WriteHeader(http.StatusNotFound)

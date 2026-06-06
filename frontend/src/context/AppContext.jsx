@@ -28,6 +28,9 @@ export function AppProvider({ children }) {
   const [loadingState, setLoadingState] = useState("");
   const [lastRunReport, setLastRunReport] = useState(null);
   const [virtualRequest, setVirtualRequest] = useState(null);
+  const [openTabs, setOpenTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [gitStatuses, setGitStatuses] = useState({}); // collectionId → status
 
   const selectedCollection = useMemo(
     () => collections.find((c) => c.id === selectedCollectionId) || null,
@@ -219,6 +222,38 @@ export function AppProvider({ children }) {
     [loadHistory],
   );
 
+  // Tab management
+  const openTab = useCallback((request) => {
+    if (!request?.id) return;
+    setActiveTabId(request.id);
+    setOpenTabs((prev) => {
+      const exists = prev.find((t) => t.id === request.id);
+      if (exists) return prev;
+      return [
+        ...prev,
+        { id: request.id, request, isDirty: false, response: null },
+      ];
+    });
+  }, []);
+
+  const closeTab = useCallback((tabId) => {
+    setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
+    setActiveTabId((prev) => (prev === tabId ? null : prev));
+  }, []);
+
+  // Auto-select first tab if none is active but tabs exist
+  useEffect(() => {
+    if (!activeTabId && openTabs.length > 0) {
+      setActiveTabId(openTabs[0].id);
+    }
+  }, [activeTabId, openTabs]);
+
+  const updateTabData = useCallback((tabId, updates) => {
+    setOpenTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, ...updates } : t)),
+    );
+  }, []);
+
   // Load data on mount
   useEffect(() => {
     loadCollections();
@@ -256,6 +291,17 @@ export function AppProvider({ children }) {
       setErrorMessage,
       setLastRunReport,
 
+      // Tabs
+      openTabs,
+      activeTabId,
+      openTab,
+      closeTab,
+      updateTabData,
+
+      // Git
+      gitStatuses,
+      setGitStatuses,
+
       // Actions
       createCollection,
       deleteCollection,
@@ -290,6 +336,10 @@ export function AppProvider({ children }) {
       loadingState,
       lastRunReport,
       bridgeMode,
+      virtualRequest,
+      openTabs,
+      activeTabId,
+      gitStatuses,
       createCollection,
       deleteCollection,
       updateCollection,

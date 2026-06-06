@@ -1,16 +1,17 @@
-version: '3'
+version: "3"
 
 includes:
   common: ../Taskfile.yml
 
 tasks:
   build:
-    summary: Builds the application for Linux
+    summary: Builds the application for Linux (GUI + CLI)
     deps:
       - task: common:go:mod:tidy
       - task: common:build:frontend
+      - task: common:build:cli
     cmds:
-      - go build -o {{.BIN_DIR}}/{{.APP_NAME}} .
+      - "go build -o {{.BIN_DIR}}/{{.APP_NAME}} ."
     env:
       GOOS: linux
 
@@ -19,9 +20,10 @@ tasks:
     deps:
       - task: build
     cmds:
-      - echo "Linux package: {{.BIN_DIR}}/{{.APP_NAME}}"
+      - 'echo "Linux package: {{.BIN_DIR}}/{{.APP_NAME}}"'
+      - 'echo "CLI binary at {{.BIN_DIR}}/gopost"'
 
   run:
     summary: Runs the application on Linux
     cmds:
-      - ./{{.BIN_DIR}}/{{.APP_NAME}}
+      - "./{{.BIN_DIR}}/{{.APP_NAME}}"

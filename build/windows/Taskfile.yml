@@ -1,16 +1,17 @@
-version: '3'
+version: "3"
 
 includes:
   common: ../Taskfile.yml
 
 tasks:
   build:
-    summary: Builds the application for Windows
+    summary: Builds the application for Windows (GUI + CLI)
     deps:
       - task: common:go:mod:tidy
       - task: common:build:frontend
+      - task: common:build:cli
     cmds:
-      - go build -o {{.BIN_DIR}}/{{.APP_NAME}}.exe .
+      - "go build -o {{.BIN_DIR}}/{{.APP_NAME}}.exe ."
     env:
       GOOS: windows
 
@@ -19,9 +20,10 @@ tasks:
     deps:
       - task: build
     cmds:
-      - echo "Windows package: {{.BIN_DIR}}/{{.APP_NAME}}.exe"
+      - 'echo "Windows package: {{.BIN_DIR}}/{{.APP_NAME}}.exe"'
+      - 'echo "CLI binary at {{.BIN_DIR}}/gopost.exe"'
 
   run:
     summary: Runs the application on Windows
     cmds:
-      - ./{{.BIN_DIR}}/{{.APP_NAME}}.exe
+      - "./{{.BIN_DIR}}/{{.APP_NAME}}.exe"

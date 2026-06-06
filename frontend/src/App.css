@@ -83,3 +83,43 @@ body,
     background: hsl(var(--primary) / 0.3);
     color: hsl(var(--foreground));
 }
+
+/* Slide-in from right animation */
+@keyframes slide-in-from-right {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+.animate-slide-in-from-right {
+    animation: slide-in-from-right 0.15s ease-out;
+}
+
+/* xterm.js — ensure viewport fills container */
+.xterm {
+    height: 100%;
+    padding: 4px;
+}
+.xterm-viewport {
+    overflow-y: auto !important;
+}
+.xterm .xterm-screen {
+    height: 100%;
+}
+.xterm-helper-textarea {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    opacity: 0 !important;
+    z-index: 10 !important;
+    pointer-events: auto !important;
+    padding: 0 !important;
+    border: none !important;
+    outline: none !important;
+}

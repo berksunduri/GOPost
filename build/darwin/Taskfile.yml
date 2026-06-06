@@ -5,26 +5,28 @@ includes:
 
 tasks:
   build:
-    summary: Builds the application for macOS
+    summary: "Builds the application for macOS (GUI + CLI)"
     deps:
       - task: common:go:mod:tidy
       - task: common:build:frontend
+      - task: common:build:cli
     cmds:
-      - go build -o {{.BIN_DIR}}/{{.APP_NAME}} .
+      - "go build -o {{.BIN_DIR}}/{{.APP_NAME}} ."
     env:
       CGO_ENABLED: 1
 
   package:
-    summary: Packages a production build for macOS
+    summary: "Packages a production build for macOS (GUI .app + CLI binary)"
     deps:
       - task: build
     cmds:
-      - mkdir -p {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS
-      - mkdir -p {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources
-      - cp {{.BIN_DIR}}/{{.APP_NAME}} {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS
-      - echo "App packaged at {{.BIN_DIR}}/{{.APP_NAME}}.app"
+      - "mkdir -p {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
+      - "mkdir -p {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources"
+      - "cp {{.BIN_DIR}}/{{.APP_NAME}} {{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
+      - 'echo "App packaged at {{.BIN_DIR}}/{{.APP_NAME}}.app"'
+      - 'echo "CLI binary at {{.BIN_DIR}}/gopost"'
 
   run:
-    summary: Runs the application on macOS
+    summary: "Runs the application on macOS"
     cmds:
-      - ./{{.BIN_DIR}}/{{.APP_NAME}}
+      - "./{{.BIN_DIR}}/{{.APP_NAME}}"

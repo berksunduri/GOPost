@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useState, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import { useTheme } from "@/context/ThemeContext";
 import { Button, Input, Separator, Badge } from "@/components/ui";
@@ -9,17 +9,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
-import { useResizablePanels } from "@/lib/useResizablePanels";
 import Collections from "@/components/Collections";
 import RequestEditor from "@/components/RequestEditor";
 import EnvironmentManager from "@/components/EnvironmentManager";
-import RequestList from "@/components/RequestList";
 import HistoryPanel from "@/components/HistoryPanel";
+import { TabBar } from "@/components/TabBar";
+import { TerminalPanel } from "@/components/TerminalPanel";
+import { GitPanel } from "@/components/GitPanel";
+import { ActivityBar } from "@/components/ActivityBar";
 import { t } from "@/i18n";
 import { api } from "@/api";
-import { Palette } from "lucide-react";
+import { Palette, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import "./App.css";
+
+// Embedded terminal disabled — flip to true in config/features.js to re-enable.
+const TERMINAL_ENABLED = false;
 
 function App() {
   const {
@@ -37,17 +42,41 @@ function App() {
     loadEnvironments,
     loadHistory,
     runCollection,
+    loadRequests,
   } = useApp();
 
   const { themeId, setThemeId, themeList } = useTheme();
-
   const importInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const [importModeState, setImportModeState] = React.useState("replace");
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [terminalPct, setTerminalPct] = useState(25);
+  const [activity, setActivity] = useState("explorer");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
 
-  const { widths, getHandleProps, containerRef } = useResizablePanels(
-    [20, 55, 25],
-    [14, 30, 16],
+  const handleTerminalResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startPct = terminalPct;
+      const onMove = (ev) => {
+        const dy = startY - ev.clientY;
+        const h = document.getElementById("main-area")?.clientHeight || 600;
+        setTerminalPct(Math.min(Math.max(startPct + (dy / h) * 100, 15), 50));
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [terminalPct],
   );
 
   React.useEffect(() => {
@@ -61,24 +90,26 @@ function App() {
         e.preventDefault();
         importInputRef.current?.click();
       }
+      if (TERMINAL_ENABLED && mod && e.key === "`") {
+        e.preventDefault();
+        setShowTerminal((s) => !s);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Toast on collection run complete
   React.useEffect(() => {
     if (lastRunReport) {
       const { total, passed, failed } = lastRunReport;
-      if (failed === 0) {
+      if (failed === 0)
         toast.success(
           `Collection run complete \u2014 ${passed}/${total} passed`,
         );
-      } else {
+      else
         toast.error(
           `Collection run complete \u2014 ${passed} passed, ${failed} failed`,
         );
-      }
     }
   }, [lastRunReport]);
 
@@ -91,7 +122,7 @@ function App() {
       const result = await api.ImportDataContent(data, importModeState);
       if (importModeState === "preview") {
         toast.info(
-          `Preview: ${result.collections} collections, ${result.requests} requests, ${result.environments} environments, ${result.history} history entries`,
+          `Preview: ${result.collections} collections, ${result.requests} requests`,
           { duration: 5000 },
         );
       } else {
@@ -106,7 +137,6 @@ function App() {
       if (e?.target) e.target.value = "";
     }
   };
-
   const handleExport = async () => {
     try {
       const data = await api.ExportDataContent();
@@ -127,9 +157,131 @@ function App() {
     }
   };
 
+  // --- Drag & Drop .http / .rest file import ---
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer?.types?.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+      dragCounter.current = 0;
+
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+
+      const httpFiles = Array.from(files).filter(
+        (f) =>
+          f.name.endsWith(".http") ||
+          f.name.endsWith(".rest") ||
+          f.name.endsWith(".gopost.json"),
+      );
+      if (httpFiles.length === 0) return;
+
+      for (const file of httpFiles) {
+        try {
+          const content = await file.text();
+
+          if (file.name.endsWith(".gopost.json")) {
+            const data = JSON.parse(content);
+            const result = await api.ImportDataContent(data, importModeState);
+            if (importModeState === "preview") {
+              toast.info(
+                `Preview: ${result.collections} collections, ${result.requests} requests`,
+                { duration: 5000 },
+              );
+            } else {
+              await loadCollections();
+              await loadEnvironments();
+              await loadHistory();
+              toast.success(`Imported ${file.name}`);
+            }
+            continue;
+          }
+
+          let targetCollectionId = selectedCollection?.id;
+
+          if (!targetCollectionId) {
+            const colName =
+              file.name.replace(/\.(http|rest)$/, "") || "Imported API";
+            const col = await api.CreateCollection(colName);
+            targetCollectionId = col.id;
+            await loadCollections();
+          }
+
+          const result = await api.ImportHTTPContent(
+            targetCollectionId,
+            content,
+          );
+          toast.success(
+            `Imported ${result.count} request${result.count !== 1 ? "s" : ""} from ${file.name}`,
+          );
+          await loadRequests(targetCollectionId);
+        } catch (err) {
+          toast.error(`Failed to import ${file.name}: ${err.message}`);
+        }
+      }
+    },
+    [
+      selectedCollection,
+      importModeState,
+      loadCollections,
+      loadEnvironments,
+      loadHistory,
+      loadRequests,
+    ],
+  );
+
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      {/* Sidebar */}
+    <div
+      className="flex h-screen bg-background text-foreground relative"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag-over visual overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary/20 border-2 border-dashed border-primary rounded-lg pointer-events-none">
+          <div className="bg-card rounded-xl px-8 py-6 shadow-2xl border text-center">
+            <p className="text-lg font-semibold mb-1">
+              Drop .http file to import
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Supports .http, .rest, and GoPost .json exports
+            </p>
+          </div>
+        </div>
+      )}
+      {/* Activity Bar — far left */}
+      <ActivityBar active={activity} onSelect={setActivity} />
+
+      {/* Sidebar Panel */}
       <div className="w-64 bg-sidebar border-r flex flex-col shrink-0">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h1 className="text-base font-bold tracking-tight">GoPost</h1>
@@ -147,17 +299,21 @@ function App() {
             </SelectContent>
           </Select>
         </div>
-
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <Collections />
-          <Separator />
-          <EnvironmentManager />
+          {activity === "explorer" && (
+            <>
+              <Collections />
+              <Separator />
+              <EnvironmentManager />
+            </>
+          )}
+          {activity === "git" && <GitPanel />}
+          {activity === "history" && <HistoryPanel />}
         </div>
       </div>
 
       {/* Main area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* Error banner */}
         {errorMessage && (
           <div className="flex items-center gap-3 px-4 py-2.5 bg-destructive/15 border-b">
             <span className="text-sm flex-1 truncate">{errorMessage}</span>
@@ -182,7 +338,6 @@ function App() {
           </div>
         )}
 
-        {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b">
           <Input
             ref={searchInputRef}
@@ -195,7 +350,6 @@ function App() {
           <Button variant="outline" size="sm" onClick={searchRequests}>
             {t("search")}
           </Button>
-
           <input
             ref={importInputRef}
             type="file"
@@ -210,7 +364,6 @@ function App() {
           >
             {t("import")}
           </Button>
-
           <Select value={importModeState} onValueChange={setImportModeState}>
             <SelectTrigger className="w-[110px] h-8 text-xs">
               <SelectValue />
@@ -221,11 +374,9 @@ function App() {
               <SelectItem value="preview">{t("importPreview")}</SelectItem>
             </SelectContent>
           </Select>
-
           <Button variant="outline" size="sm" onClick={handleExport}>
             {t("export")}
           </Button>
-
           <Button
             size="sm"
             onClick={runCollection}
@@ -233,11 +384,19 @@ function App() {
           >
             {t("runCollection")}
           </Button>
-
+          {TERMINAL_ENABLED && (
+            <Button
+              variant={showTerminal ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowTerminal((s) => !s)}
+              title="Toggle Terminal (Ctrl+`)"
+            >
+              <Terminal className="h-4 w-4" />
+            </Button>
+          )}
           <span className="ml-auto text-[11px] text-muted-foreground">
             {bridgeMode === "native" ? t("bridgeNative") : t("bridgeFallback")}
           </span>
-
           {loadingState && (
             <Badge variant="secondary" className="text-[10px]">
               {t("loading")}
@@ -245,7 +404,6 @@ function App() {
           )}
         </div>
 
-        {/* Run report */}
         {lastRunReport && (
           <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs text-muted-foreground">
             <span>
@@ -266,42 +424,27 @@ function App() {
           </div>
         )}
 
-        {/* Content area with resizable panels */}
-        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-          {selectedCollection ? (
-            <div ref={containerRef} className="flex h-full w-full">
-              <div
-                style={{ width: `${widths[0]}%` }}
-                className="h-full min-w-0 border-r"
-              >
-                <RequestList />
-              </div>
-              <div
-                {...getHandleProps(0)}
-                className="w-1.5 shrink-0 bg-border hover:bg-primary/50 active:bg-primary cursor-col-resize transition-colors"
-              />
-              <div
-                style={{ width: `${widths[1]}%` }}
-                className="h-full min-w-0"
-              >
-                <RequestEditor />
-              </div>
-              <div
-                {...getHandleProps(1)}
-                className="w-1.5 shrink-0 bg-border hover:bg-primary/50 active:bg-primary cursor-col-resize transition-colors"
-              />
-              <div
-                style={{ width: `${widths[2]}%` }}
-                className="h-full min-w-0 border-l"
-              >
-                <HistoryPanel />
-              </div>
+        <div id="main-area" className="flex-1 flex min-h-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-w-0">
+            <TabBar />
+            <div className="flex-1 min-h-0">
+              <RequestEditor />
             </div>
-          ) : (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p className="text-lg">{t("selectCollection")}</p>
-            </div>
-          )}
+            {TERMINAL_ENABLED && showTerminal && (
+              <>
+                <div
+                  onMouseDown={handleTerminalResize}
+                  className="h-1.5 shrink-0 bg-border hover:bg-primary/50 active:bg-primary cursor-row-resize transition-colors"
+                />
+                <div
+                  style={{ height: `${terminalPct}%` }}
+                  className="min-h-[60px] shrink-0"
+                >
+                  <TerminalPanel />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

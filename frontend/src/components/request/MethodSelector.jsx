@@ -1,8 +1,23 @@
 import React from "react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+  "GRAPHQL",
+];
 
 const methodColors = {
   GET: "text-green-400",
@@ -12,17 +27,28 @@ const methodColors = {
   PATCH: "text-purple-400",
   HEAD: "text-gray-400",
   OPTIONS: "text-gray-400",
+  GRAPHQL: "text-pink-400",
 };
 
 export function MethodSelector({ value = "GET", onChange, className }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={cn("w-[110px] font-mono font-bold", methodColors[value], className)}>
+      <SelectTrigger
+        className={cn(
+          "w-[110px] font-mono font-bold",
+          methodColors[value],
+          className,
+        )}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {HTTP_METHODS.map((method) => (
-          <SelectItem key={method} value={method} className={cn("font-mono font-bold", methodColors[method])}>
+          <SelectItem
+            key={method}
+            value={method}
+            className={cn("font-mono font-bold", methodColors[method])}
+          >
             {method}
           </SelectItem>
         ))}

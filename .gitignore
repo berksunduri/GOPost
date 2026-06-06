@@ -37,5 +37,12 @@ Thumbs.db
 .env
 .env.*
 
-frontend/node_modules/
-frontend/dist/
+# Build output
+bin/
+
+# Wails generated bindings (auto-generated)
+frontend/src/wailsjs/
+
+plans/
+
+data/

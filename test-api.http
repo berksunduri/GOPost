@@ -1,0 +1,12 @@
+### GET Request
+GET https://httpbin.org/get
+User-Agent: GoPost-CLI/1.0
+
+### POST JSON
+POST https://httpbin.org/post
+Content-Type: application/json
+
+{"name": "GoPost", "test": true}
+
+### GET Status 200
+GET https://httpbin.org/status/200

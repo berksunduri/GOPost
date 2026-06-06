@@ -1,0 +1,63 @@
+# GoPost API Tests — GitHub Action
+#
+# Runs a GoPost collection in CI and uploads JUnit test results.
+#
+# Usage:
+#   - uses: berksunduri/GOPost/.github/actions/run-collection@main
+#     with:
+#       collection: my-api
+#       environment: staging
+name: "GoPost API Tests"
+description: "Run API tests with GoPost and upload results"
+inputs:
+  collection:
+    description: "Path to collection directory or .http file"
+    required: true
+  environment:
+    description: "Environment name (optional)"
+    required: false
+  reporter:
+    description: "Reporter format: console, junit, json"
+    required: false
+    default: "junit"
+  parallel:
+    description: "Number of parallel workers"
+    required: false
+    default: "1"
+  timeout:
+    description: "Per-request timeout (e.g., 30s, 1m)"
+    required: false
+    default: "30s"
+  stop_on_fail:
+    description: "Stop on first failure"
+    required: false
+    default: "false"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.22"
+
+    - name: Install GoPost CLI
+      shell: bash
+      run: go install github.com/berksunduri/GOPost/cmd/gopost@latest
+
+    - name: Run collection
+      shell: bash
+      run: |
+        gopost run ${{ inputs.collection }} \
+          ${{ inputs.environment && format('--env {0}', inputs.environment) || '' }} \
+          --reporter ${{ inputs.reporter }} \
+          --output test-results.xml \
+          --parallel ${{ inputs.parallel }} \
+          --timeout ${{ inputs.timeout }} \
+          ${{ inputs.stop_on_fail == 'true' && '--stop-on-fail' || '' }}
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-test-results
+        path: test-results.xml
