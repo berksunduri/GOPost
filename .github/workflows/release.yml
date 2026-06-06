@@ -1,10 +1,8 @@
 # GoPost Release Workflow
 #
 # Triggered when a version tag is pushed (e.g., v1.0.0).
-# Produces proper native packages: macOS .app, Windows NSIS installer, Linux AppImage.
+# Produces proper native packages: macOS .dmg, Windows NSIS installer, Linux AppImage.
 # Also builds standalone CLI binaries for all platforms.
-#
-# Users download the .dmg / .exe installer / .AppImage — double-click to run.
 
 name: Release
 
@@ -34,9 +32,6 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails@latest
-
       - name: Install icon tools
         run: brew install librsvg
 
@@ -49,25 +44,54 @@ jobs:
       - name: Build frontend
         run: cd frontend && npm run build && cd ..
 
-      - name: Build macOS .app with Wails
-        run: wails build
+      - name: Build macOS binary
+        run: go build -ldflags "-X main.version=${{ github.ref_name }}" -o bin/GoPost .
         env:
           CGO_ENABLED: 1
 
+      - name: Create .app bundle
+        run: |
+          APP="bin/GoPost.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp bin/GoPost "$APP/Contents/MacOS/GoPost"
+
+          # Info.plist
+          cat > "$APP/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>GoPost</string>
+            <key>CFBundleIdentifier</key><string>com.gopost.app</string>
+            <key>CFBundleName</key><string>GoPost</string>
+            <key>CFBundleDisplayName</key><string>GoPost</string>
+            <key>CFBundleVersion</key><string>${{ github.ref_name }}</string>
+            <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Copy icon if it exists
+          if [ -f build/darwin/icon.icns ]; then
+            cp build/darwin/icon.icns "$APP/Contents/Resources/icon.icns"
+          fi
+
+          echo "Created $APP"
+
       - name: Create .dmg
         run: |
+          APP="bin/GoPost.app"
           mkdir -p dmg-root
-          cp -R bin/GoPost.app dmg-root/
+          cp -R "$APP" dmg-root/
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "GoPost" -srcfolder dmg-root \
-            -ov -format UDZO "bin/GoPost-${GITHUB_REF_NAME}-macOS.dmg"
+            -ov -format UDZO "bin/GoPost-${{ github.ref_name }}-macOS.dmg"
           rm -rf dmg-root
-
-      - name: Upload .app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GoPost-macOS-app
-          path: bin/GoPost.app
 
       - name: Upload .dmg artifact
         uses: actions/upload-artifact@v4
@@ -76,7 +100,7 @@ jobs:
           path: bin/GoPost-*.dmg
 
   # ═══════════════════════════════════════════════════════════
-  #  macOS CLI (separate, for CI runners)
+  #  macOS CLI
   # ═══════════════════════════════════════════════════════════
   build-macos-cli:
     name: Build macOS CLI
@@ -113,7 +137,7 @@ jobs:
           path: gopost-darwin-amd64.tar.gz
 
   # ═══════════════════════════════════════════════════════════
-  #  Windows — .exe + NSIS installer
+  #  Windows — .exe
   # ═══════════════════════════════════════════════════════════
   build-windows:
     name: Build Windows
@@ -129,19 +153,6 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails@latest
-        shell: pwsh
-
-      - name: Install ImageMagick (for icon)
-        run: choco install imagemagick -y --no-progress
-        shell: pwsh
-
-      - name: Generate app icons
-        run: |
-          magick -background none -density 1024 build/appicon/icon.svg -resize 256x256 build/windows/icon.ico
-        shell: pwsh
-
       - name: Install frontend deps
         run: cd frontend && npm install && cd ..
         shell: pwsh
@@ -150,20 +161,20 @@ jobs:
         run: cd frontend && npm run build && cd ..
         shell: pwsh
 
-      - name: Build Windows with Wails (NSIS installer)
-        run: wails build
+      - name: Build Windows binary
+        run: |
+          $env:CGO_ENABLED = "1"
+          go build -ldflags "-X main.version=${{ github.ref_name }} -H windowsgui" -o bin/GoPost.exe .
         shell: pwsh
-        env:
-          CGO_ENABLED: 1
 
-      - name: Upload installer
+      - name: Upload .exe artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GoPost-Windows-Installer
-          path: bin/GoPost*.exe
+          name: GoPost-Windows-exe
+          path: bin/GoPost.exe
 
   # ═══════════════════════════════════════════════════════════
-  #  Windows CLI (standalone)
+  #  Windows CLI
   # ═══════════════════════════════════════════════════════════
   build-windows-cli:
     name: Build Windows CLI
@@ -175,8 +186,7 @@ jobs:
           go-version: "1.22"
       - name: Build CLI
         run: |
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
+          $env:GOOS = "windows"; $env:GOARCH = "amd64"
           go build -ldflags "-X main.version=${{ github.ref_name }}" -o gopost.exe ./cmd/gopost/
           Compress-Archive -Path gopost.exe -DestinationPath gopost-windows-amd64.zip
         shell: pwsh
@@ -234,19 +244,12 @@ jobs:
       - name: Flatten and rename
         run: |
           mkdir -p release
-          # Find all files and copy to release/
           find dist -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.dmg" -o -name "*.exe" \) | while read f; do
-            # Skip NSIS uninstaller
             case "$f" in
               *uninst*) continue ;;
             esac
             cp "$f" release/
           done
-          # Copy .app bundle
-          if [ -d "dist/GoPost-macOS-app/GoPost.app" ]; then
-            cp -R dist/GoPost-macOS-app/GoPost.app release/
-            cd release && tar -czf GoPost-macOS-app.tar.gz GoPost.app && rm -rf GoPost.app && cd ..
-          fi
           ls -la release/
 
       - name: Generate checksums
@@ -265,7 +268,7 @@ jobs:
             | Platform | Download |
             |----------|----------|
             | **macOS** | `GoPost-*.dmg` — open, drag to Applications |
-            | **Windows** | `GoPost-*-installer.exe` — run installer |
+            | **Windows** | `GoPost.exe` — download and run |
 
             ### ⌨ Command-Line Runner
 
@@ -280,12 +283,8 @@ jobs:
             ### 📦 Package Managers
 
             ```bash
-            # Homebrew (macOS/Linux)
-            brew tap berksunduri/gopost
-            brew install gopost
-
-            # Chocolatey (Windows)
-            choco install gopost
+            brew tap berksunduri/gopost && brew install gopost     # macOS
+            choco install gopost                                     # Windows
             ```
 
             ### 🔑 Checksums

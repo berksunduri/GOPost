@@ -3,7 +3,7 @@
 *.dll
 *.so
 *.dylib
-gopost
+/gopost
 
 # Go
 *.test
