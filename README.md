@@ -256,14 +256,17 @@ Requires an EV or OV code signing certificate (~$200-400/year from DigiCert, Sec
 
 ### Without signing
 
-Users can still run the app:
-- **macOS `"damaged"` error:** Run this in Terminal:
-  ```bash
-  xattr -cr /Applications/GoPost.app
-  ```
-  Then open normally.
-- **macOS `"unidentified developer"`:** Right-click the app → Open
-- **Windows:** Right-click `GoPost.exe` → Properties → Unblock, then run
+Until the app is notarized, macOS shows a security warning. This is normal
+for open-source apps — even VLC and Firefox direct downloads show it.
+
+**One-time bypass (choose either):**
+
+**Option A — Right-click:** Right-click `GoPost.app` in Finder → **Open** → click **Open**.
+
+**Option B — System Settings:** Go to **System Settings → Privacy & Security**, scroll
+to the bottom, click **Open Anyway** next to "GoPost was blocked."
+
+**Windows:** Right-click `GoPost.exe` → Properties → **Unblock**, then run.
 
 ---
 
