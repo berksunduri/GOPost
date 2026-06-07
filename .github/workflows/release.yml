@@ -84,12 +84,47 @@ jobs:
       - name: Create .dmg
         run: |
           APP="bin/GoPost.app"
+
+          # ── Code sign .app (only if cert secret is set) ──
+          if [ -n "$APPLE_DEVELOPER_CERT" ]; then
+            echo "Signing with Apple Developer ID..."
+            echo "$APPLE_DEVELOPER_CERT" | base64 -d > cert.p12
+            security create-keychain -p temp build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p temp build.keychain
+            security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
+            codesign --deep --force --verify --verbose \
+              --sign "Developer ID Application: $APPLE_TEAM_ID" \
+              --options runtime \
+              "$APP"
+            rm -f cert.p12
+          fi
+
           mkdir -p dmg-root
           cp -R "$APP" dmg-root/
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "GoPost" -srcfolder dmg-root \
             -ov -format UDZO "bin/GoPost-${{ github.ref_name }}-macOS.dmg"
           rm -rf dmg-root
+
+          # ── Notarize .dmg (only if signed) ──
+          if [ -n "$APPLE_DEVELOPER_CERT" ]; then
+            echo "Submitting for notarization..."
+            xcrun notarytool submit "bin/GoPost-${{ github.ref_name }}-macOS.dmg" \
+              --apple-id "$APPLE_NOTARY_APPLE_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "bin/GoPost-${{ github.ref_name }}-macOS.dmg"
+            echo "Notarized."
+          fi
+        env:
+          APPLE_DEVELOPER_CERT: ${{ secrets.APPLE_DEVELOPER_CERT }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - name: Upload .dmg artifact
         uses: actions/upload-artifact@v4
@@ -142,11 +177,27 @@ jobs:
         with:
           node-version: "18"
 
+      - name: Install icon + sign tools
+        run: choco install imagemagick -y --no-progress
+        shell: pwsh
+
+      - name: Generate Windows icon
+        run: |
+          magick -background none -density 1024 build/appicon/icon.svg `
+            ( -clone 0 -resize 16x16  ) `
+            ( -clone 0 -resize 32x32  ) `
+            ( -clone 0 -resize 48x48  ) `
+            ( -clone 0 -resize 64x64  ) `
+            ( -clone 0 -resize 256x256 ) `
+            -delete 0 build/windows/icon.ico
+          echo "Icon created: build/windows/icon.ico"
+        shell: pwsh
+
       - name: Install goversioninfo
         run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
         shell: pwsh
 
-      - name: Generate Windows .syso (version metadata)
+      - name: Generate .syso (version info + icon)
         run: goversioninfo -platform-specific build/windows/versioninfo.json
         shell: pwsh
 
@@ -163,6 +214,26 @@ jobs:
           $env:CGO_ENABLED = "1"
           go build -ldflags "-X main.version=${{ github.ref_name }} -H windowsgui" -o bin/GoPost.exe .
         shell: pwsh
+
+      # ── Code sign (only if cert secret is set) ──
+      - name: Setup code signing cert
+        if: env.WINDOWS_SIGNING_CERT != ''
+        run: |
+          $certBytes = [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT)
+          [IO.File]::WriteAllBytes("cert.pfx", $certBytes)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
+
+      - name: Sign binary
+        if: env.WINDOWS_SIGNING_CERT != ''
+        run: |
+          signtool sign /fd SHA256 /f cert.pfx /p $env:WINDOWS_SIGNING_PASSWORD `
+            /tr http://timestamp.digicert.com /td SHA256 `
+            bin/GoPost.exe
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
 
       - name: Upload .exe artifact
         uses: actions/upload-artifact@v4

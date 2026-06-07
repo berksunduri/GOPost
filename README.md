@@ -223,6 +223,45 @@ task build:all
 
 ---
 
+## Code Signing (optional)
+
+To eliminate OS security warnings (Gatekeeper on macOS, SmartScreen on Windows),
+add these secrets to your GitHub repo:
+
+### macOS (Apple Developer ID + Notarization)
+
+Requires an Apple Developer account ($99/year):
+
+| Secret | Description |
+|--------|-------------|
+| `APPLE_DEVELOPER_CERT` | Base64 of your Developer ID Application .p12 certificate |
+| `APPLE_CERT_PASSWORD` | Password for the .p12 certificate |
+| `APPLE_TEAM_ID` | Your Apple Developer Team ID (10 chars) |
+| `APPLE_NOTARY_APPLE_ID` | Apple ID email for notarization |
+| `APPLE_NOTARY_PASSWORD` | App-specific password for notarization |
+
+```bash
+# Encode your cert for GitHub Secrets
+base64 -i developer_id.p12 | pbcopy
+```
+
+### Windows (Authenticode)
+
+Requires an EV or OV code signing certificate (~$200-400/year from DigiCert, Sectigo):
+
+| Secret | Description |
+|--------|-------------|
+| `WINDOWS_SIGNING_CERT` | Base64 of your .pfx code signing certificate |
+| `WINDOWS_SIGNING_PASSWORD` | Password for the .pfx certificate |
+
+### Without signing
+
+Users can still run the app:
+- **macOS:** Right-click → Open (Gatekeeper bypass)
+- **Windows:** Right-click → Properties → Unblock, or `Unblock-File .\GoPost.exe`
+
+---
+
 ## Contributing
 
 GoPost is MIT-licensed and welcomes contributions!
@@ -239,4 +278,4 @@ See [`plans/IMPLEMENTATION_ROADMAP.md`](plans/IMPLEMENTATION_ROADMAP.md) for the
 
 ## License
 
-MIT © [Berksun Durukal](https://github.com/berksunduri)
+MIT © [Berk Sunduri](https://github.com/berksunduri)
