@@ -403,4 +403,93 @@ export const api = {
       body: JSON.stringify({ remote: remote || "origin" }),
     });
   },
+
+  // WebSocket
+  async ConnectWebSocket(requestId, url, headers = {}) {
+    const service = getAppService();
+    if (service && typeof service.ConnectWebSocket === "function")
+      return service.ConnectWebSocket(requestId, url, headers);
+    return fetchJSON("/api/ws/connect", {
+      method: "POST",
+      body: JSON.stringify({ requestId, url, headers }),
+    });
+  },
+  async DisconnectWebSocket(connId) {
+    const service = getAppService();
+    if (service && typeof service.DisconnectWebSocket === "function")
+      return service.DisconnectWebSocket(connId);
+    return fetchJSON("/api/ws/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ connId }),
+    });
+  },
+  async SendWebSocketMessage(connId, message) {
+    const service = getAppService();
+    if (service && typeof service.SendWebSocketMessage === "function")
+      return service.SendWebSocketMessage(connId, message);
+    return fetchJSON("/api/ws/send", {
+      method: "POST",
+      body: JSON.stringify({ connId, message }),
+    });
+  },
+  async GetWebSocketMessages(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetWebSocketMessages === "function")
+      return service.GetWebSocketMessages(connId);
+    return fetchJSON(`/api/ws/messages?connId=${encodeURIComponent(connId)}`);
+  },
+  async GetAllWebSocketMessages(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetAllWebSocketMessages === "function")
+      return service.GetAllWebSocketMessages(connId);
+    return fetchJSON(
+      `/api/ws/messages/all?connId=${encodeURIComponent(connId)}`,
+    );
+  },
+  async GetWebSocketStatus(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetWebSocketStatus === "function")
+      return service.GetWebSocketStatus(connId);
+    return fetchJSON(`/api/ws/status?connId=${encodeURIComponent(connId)}`);
+  },
+
+  // SSE
+  async ConnectSSE(requestId, url, headers = {}) {
+    const service = getAppService();
+    if (service && typeof service.ConnectSSE === "function")
+      return service.ConnectSSE(requestId, url, headers);
+    return fetchJSON("/api/sse/connect", {
+      method: "POST",
+      body: JSON.stringify({ requestId, url, headers }),
+    });
+  },
+  async DisconnectSSE(connId) {
+    const service = getAppService();
+    if (service && typeof service.DisconnectSSE === "function")
+      return service.DisconnectSSE(connId);
+    return fetchJSON("/api/sse/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ connId }),
+    });
+  },
+  async GetSSEEvents(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetSSEEvents === "function")
+      return service.GetSSEEvents(connId);
+    return fetchJSON(`/api/sse/events?connId=${encodeURIComponent(connId)}`);
+  },
+  async GetAllSSEEvents(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetAllSSEEvents === "function")
+      return service.GetAllSSEEvents(connId);
+    return fetchJSON(
+      `/api/sse/events/all?connId=${encodeURIComponent(connId)}`,
+    );
+  },
+  async GetSSEStatus(connId) {
+    const service = getAppService();
+    if (service && typeof service.GetSSEStatus === "function")
+      return service.GetSSEStatus(connId);
+    return fetchJSON(`/api/sse/status?connId=${encodeURIComponent(connId)}`);
+  },
 };

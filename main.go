@@ -398,6 +398,101 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.GitLog(id)
 		writeJSON(w, data, err)
 		return
+
+	// WebSocket operations
+	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/connect":
+		var payload struct {
+			RequestID string            `json:"requestId"`
+			URL       string            `json:"url"`
+			Headers   map[string]string `json:"headers"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.ConnectWebSocket(payload.RequestID, payload.URL, payload.Headers)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/disconnect":
+		var payload struct {
+			ConnID string `json:"connId"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		err := appInstance.DisconnectWebSocket(payload.ConnID)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/send":
+		var payload struct {
+			ConnID  string `json:"connId"`
+			Message string `json:"message"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		err := appInstance.SendWebSocketMessage(payload.ConnID, payload.Message)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/messages":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetWebSocketMessages(connID)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/messages/all":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetAllWebSocketMessages(connID)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/status":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetWebSocketStatus(connID)
+		writeJSON(w, data, err)
+		return
+
+	// SSE operations
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sse/connect":
+		var payload struct {
+			RequestID string            `json:"requestId"`
+			URL       string            `json:"url"`
+			Headers   map[string]string `json:"headers"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.ConnectSSE(payload.RequestID, payload.URL, payload.Headers)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sse/disconnect":
+		var payload struct {
+			ConnID string `json:"connId"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		err := appInstance.DisconnectSSE(payload.ConnID)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/events":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetSSEEvents(connID)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/events/all":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetAllSSEEvents(connID)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/status":
+		connID := r.URL.Query().Get("connId")
+		data, err := appInstance.GetSSEStatus(connID)
+		writeJSON(w, data, err)
+		return
+
 	case r.Method == http.MethodPost && r.URL.Path == "/api/exec":
 		var payload struct {
 			Command string `json:"command"`

@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import { useApp } from "@/context/AppContext";
 import {
   Tabs,
@@ -17,6 +23,8 @@ import { GraphQLVariablesEditor } from "./request/GraphQLVariablesEditor";
 import { GraphQLSchemaExplorer } from "./request/GraphQLSchemaExplorer";
 import { GQLResponseViewer } from "./request/GQLResponseViewer";
 import { ResponseViewer } from "./request/ResponseViewer";
+import { WebSocketEditor } from "./request/WebSocketEditor";
+import { SSEEditor } from "./request/SSEEditor";
 import { t } from "@/i18n";
 import { api } from "@/api";
 import { parseCurl } from "@/lib/parseCurl";
@@ -33,6 +41,7 @@ function RequestEditor() {
     updateTabData,
     refreshRequests,
     setSelectedRequest,
+    openTab,
   } = useApp();
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
@@ -66,6 +75,9 @@ function RequestEditor() {
   const [gqlSchemaTree, setGQLSchemaTree] = useState(null);
 
   const isGraphQL = method === "GRAPHQL";
+  const isWS = method === "WS";
+  const isSSE = method === "SSE";
+  const isConnectionMode = isWS || isSSE;
 
   // Sync state when the active tab changes
   useEffect(() => {
@@ -118,6 +130,8 @@ function RequestEditor() {
     // Set active tab based on request type
     if (request.method === "GRAPHQL") {
       setActiveTabName("gql-query");
+    } else if (request.method === "WS" || request.method === "SSE") {
+      setActiveTabName("connection");
     } else {
       setActiveTabName("headers");
     }
@@ -180,6 +194,17 @@ function RequestEditor() {
           gqlVariables,
           gqlOperationName,
           gqlSchemaURL,
+        );
+      } else if (isConnectionMode) {
+        // WS/SSE: save URL and headers, body is unused
+        updated = await api.UpdateRequest(
+          request.id,
+          name || request.name,
+          method,
+          u,
+          h,
+          "",
+          "",
         );
       } else {
         updated = await api.UpdateRequest(
@@ -247,6 +272,7 @@ function RequestEditor() {
         request: created,
         isDirty: false,
       });
+      openTab(created);
     }
     setSelectedRequest(created);
     return created;
@@ -263,7 +289,9 @@ function RequestEditor() {
     setSelectedRequest,
     applyEnv,
     updateTabData,
+    openTab,
     isGraphQL,
+    isConnectionMode,
     gqlQuery,
     gqlVariables,
     gqlOperationName,
@@ -271,6 +299,8 @@ function RequestEditor() {
   ]);
 
   const handleSend = useCallback(async () => {
+    // WS/SSE use Connect/Disconnect buttons in their editors
+    if (isConnectionMode) return;
     if (!url.trim()) {
       toast.error("Please enter a URL");
       return;
@@ -304,6 +334,7 @@ function RequestEditor() {
     activeTabId,
     updateTabData,
     isGraphQL,
+    isConnectionMode,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -358,7 +389,7 @@ function RequestEditor() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === "Enter") {
         e.preventDefault();
-        handleSend();
+        if (!isConnectionMode) handleSend();
       }
       if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
@@ -371,6 +402,36 @@ function RequestEditor() {
 
   // --- GraphQL Schema Explorer panel ---
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
+
+  // Connection persistence: store connID in tab data so it survives tab switches
+  const handleWSConnectionChange = useCallback(
+    (info) => {
+      updateTabData(activeTabId, { wsConnID: info ? info.connID : null });
+    },
+    [activeTabId, updateTabData],
+  );
+
+  const handleSSEConnectionChange = useCallback(
+    (info) => {
+      updateTabData(activeTabId, { sseConnID: info ? info.connID : null });
+    },
+    [activeTabId, updateTabData],
+  );
+
+  // Disconnect WS/SSE when their tab is closed
+  const prevOpenTabsRef = useRef(openTabs);
+  useEffect(() => {
+    const prev = prevOpenTabsRef.current;
+    prevOpenTabsRef.current = openTabs;
+    const currentIDs = new Set(openTabs.map((t) => t.id));
+    // Disconnect any tabs that were removed
+    prev.forEach((tab) => {
+      if (!currentIDs.has(tab.id)) {
+        if (tab.wsConnID) api.DisconnectWebSocket(tab.wsConnID).catch(() => {});
+        if (tab.sseConnID) api.DisconnectSSE(tab.sseConnID).catch(() => {});
+      }
+    });
+  }, [openTabs]);
 
   if (!activeTab) {
     return (
@@ -404,7 +465,11 @@ function RequestEditor() {
             placeholder={
               isGraphQL
                 ? "https://api.example.com/graphql"
-                : "https://api.example.com/endpoint — paste a curl command here"
+                : isWS
+                  ? "wss://echo.example.com/ws"
+                  : isSSE
+                    ? "https://api.example.com/events"
+                    : "https://api.example.com/endpoint — paste a curl command here"
             }
             className="flex-1 font-mono text-sm"
           />
@@ -421,10 +486,12 @@ function RequestEditor() {
           <Button variant="outline" size="sm" onClick={handleSave}>
             {t("saveRequest")}
           </Button>
-          <Button onClick={handleSend} disabled={loading} size="sm">
-            <Send className="h-4 w-4" />
-            {loading ? t("sending") : t("send")}
-          </Button>
+          {!isConnectionMode && (
+            <Button onClick={handleSend} disabled={loading} size="sm">
+              <Send className="h-4 w-4" />
+              {loading ? t("sending") : t("send")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -439,7 +506,16 @@ function RequestEditor() {
           className="flex-1 flex flex-col min-h-0 min-w-0"
         >
           <TabsList className="mx-4 mt-3 w-fit">
-            {isGraphQL ? (
+            {isConnectionMode ? (
+              <>
+                <TabsTrigger value="connection" className="text-xs">
+                  Connection
+                </TabsTrigger>
+                <TabsTrigger value="headers" className="text-xs">
+                  {t("headers")}
+                </TabsTrigger>
+              </>
+            ) : isGraphQL ? (
               <>
                 <TabsTrigger value="gql-query" className="text-xs">
                   Query
@@ -479,7 +555,34 @@ function RequestEditor() {
           </TabsList>
 
           <div className="flex-1 overflow-y-auto px-4 py-4">
-            {isGraphQL ? (
+            {isConnectionMode ? (
+              <>
+                <TabsContent value="connection" className="h-full">
+                  {isWS ? (
+                    <WebSocketEditor
+                      url={url}
+                      headers={headers}
+                      requestId={request?.id}
+                      onURLChange={setURL}
+                      savedConnID={activeTab?.wsConnID}
+                      onConnectionChange={handleWSConnectionChange}
+                    />
+                  ) : (
+                    <SSEEditor
+                      url={url}
+                      headers={headers}
+                      requestId={request?.id}
+                      onURLChange={setURL}
+                      savedConnID={activeTab?.sseConnID}
+                      onConnectionChange={handleSSEConnectionChange}
+                    />
+                  )}
+                </TabsContent>
+                <TabsContent value="headers">
+                  <HeadersEditor headers={headers} onChange={setHeaders} />
+                </TabsContent>
+              </>
+            ) : isGraphQL ? (
               <>
                 <TabsContent value="gql-query" className="h-full">
                   <GraphQLQueryEditor

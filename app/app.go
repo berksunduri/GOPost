@@ -22,7 +22,9 @@ import (
 	"gopost/app/pkg/gitops"
 	"gopost/app/pkg/models"
 	"gopost/app/pkg/parser"
+	"gopost/app/pkg/sse"
 	"gopost/app/pkg/storage"
+	"gopost/app/pkg/websocket"
 )
 
 // App struct
@@ -33,6 +35,12 @@ type App struct {
 	termPort      int               // Port for terminal WebSocket server
 	schemaCacheMu sync.RWMutex
 	schemaCache   map[string]*models.CachedGraphQLSchema // URL → cached schema
+
+	wsClientsMu sync.Mutex
+	wsClients   map[string]*websocket.Client // connID → active WS client
+
+	sseClientsMu sync.Mutex
+	sseClients   map[string]*sse.Client // connID → active SSE client
 }
 
 // NewApp creates a new App application struct.
@@ -52,6 +60,8 @@ func NewApp(dataDir string) *App {
 		storage:     storage.New(dataDir),         // Legacy storage (for reference)
 		git:         storage.NewGitStore(dataDir), // New Git-friendly storage
 		schemaCache: make(map[string]*models.CachedGraphQLSchema),
+		wsClients:   make(map[string]*websocket.Client),
+		sseClients:  make(map[string]*sse.Client),
 	}
 }
 
@@ -538,7 +548,6 @@ func (a *App) MergeSnapshot(data models.ExportData) error {
 	return a.git.ReplaceAllData(&merged)
 }
 
-
 // ==================== .http File Import / Export ====================
 
 // ImportHTTPContent parses .http file content and imports all requests into a collection.
@@ -983,6 +992,187 @@ func (a *App) UpdateRequestWithGraphQL(id string, name string, method string, ur
 		return nil, err
 	}
 	return request, nil
+}
+
+// ==================== WebSocket ====================
+
+// ConnectWebSocket creates a new WebSocket connection and starts reading messages.
+// Returns the connection ID for subsequent operations.
+func (a *App) ConnectWebSocket(requestID, url string, headers map[string]string) (map[string]interface{}, error) {
+	connID := uuid.New().String()
+
+	client := websocket.NewClient(connID, url)
+	if err := client.Connect(headers); err != nil {
+		return nil, err
+	}
+
+	a.wsClientsMu.Lock()
+	a.wsClients[connID] = client
+	a.wsClientsMu.Unlock()
+
+	// Save the WS request to the collection if requestID is provided
+	if requestID != "" {
+		req, err := a.git.GetRequest(requestID)
+		if err == nil {
+			req.URL = url
+			req.Headers = headers
+			req.Method = "WS"
+			req.UpdatedAt = time.Now()
+			_ = a.git.SaveRequest(req)
+		}
+	}
+
+	return map[string]interface{}{
+		"connID": connID,
+		"url":    url,
+		"status": "connected",
+	}, nil
+}
+
+// DisconnectWebSocket closes an active WebSocket connection.
+func (a *App) DisconnectWebSocket(connID string) error {
+	a.wsClientsMu.Lock()
+	client, ok := a.wsClients[connID]
+	if !ok {
+		a.wsClientsMu.Unlock()
+		return fmt.Errorf("WebSocket connection %s not found", connID)
+	}
+	delete(a.wsClients, connID)
+	a.wsClientsMu.Unlock()
+
+	return client.Disconnect()
+}
+
+// SendWebSocketMessage sends a text message through an active WebSocket connection.
+func (a *App) SendWebSocketMessage(connID, message string) error {
+	a.wsClientsMu.Lock()
+	client, ok := a.wsClients[connID]
+	a.wsClientsMu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("WebSocket connection %s not found", connID)
+	}
+	return client.Send(message)
+}
+
+// GetWebSocketMessages returns messages received since the last poll.
+func (a *App) GetWebSocketMessages(connID string) ([]websocket.Message, error) {
+	a.wsClientsMu.Lock()
+	client, ok := a.wsClients[connID]
+	a.wsClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
+	}
+	return client.MessagesSince(), nil
+}
+
+// GetAllWebSocketMessages returns the full message log for restoring state.
+func (a *App) GetAllWebSocketMessages(connID string) ([]websocket.Message, error) {
+	a.wsClientsMu.Lock()
+	client, ok := a.wsClients[connID]
+	a.wsClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
+	}
+	return client.AllMessages(), nil
+}
+
+// GetWebSocketStatus returns the status of an active WebSocket connection.
+func (a *App) GetWebSocketStatus(connID string) (map[string]interface{}, error) {
+	a.wsClientsMu.Lock()
+	client, ok := a.wsClients[connID]
+	a.wsClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
+	}
+	return client.StatusInfo(), nil
+}
+
+// ==================== SSE (Server-Sent Events) ====================
+
+// ConnectSSE creates a new SSE connection and starts reading events.
+func (a *App) ConnectSSE(requestID, url string, headers map[string]string) (map[string]interface{}, error) {
+	connID := uuid.New().String()
+
+	client := sse.NewClient(connID, url)
+	if err := client.Connect(headers); err != nil {
+		return nil, err
+	}
+
+	a.sseClientsMu.Lock()
+	a.sseClients[connID] = client
+	a.sseClientsMu.Unlock()
+
+	// Save the SSE request to the collection if requestID is provided
+	if requestID != "" {
+		req, err := a.git.GetRequest(requestID)
+		if err == nil {
+			req.URL = url
+			req.Headers = headers
+			req.Method = "SSE"
+			req.UpdatedAt = time.Now()
+			_ = a.git.SaveRequest(req)
+		}
+	}
+
+	return map[string]interface{}{
+		"connID": connID,
+		"url":    url,
+		"status": "connected",
+	}, nil
+}
+
+// DisconnectSSE closes an active SSE connection.
+func (a *App) DisconnectSSE(connID string) error {
+	a.sseClientsMu.Lock()
+	client, ok := a.sseClients[connID]
+	if !ok {
+		a.sseClientsMu.Unlock()
+		return fmt.Errorf("SSE connection %s not found", connID)
+	}
+	delete(a.sseClients, connID)
+	a.sseClientsMu.Unlock()
+
+	return client.Disconnect()
+}
+
+// GetSSEEvents returns SSE events received since the last poll.
+func (a *App) GetSSEEvents(connID string) ([]sse.Event, error) {
+	a.sseClientsMu.Lock()
+	client, ok := a.sseClients[connID]
+	a.sseClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("SSE connection %s not found", connID)
+	}
+	return client.EventsSince(), nil
+}
+
+// GetAllSSEEvents returns the full event log for restoring state.
+func (a *App) GetAllSSEEvents(connID string) ([]sse.Event, error) {
+	a.sseClientsMu.Lock()
+	client, ok := a.sseClients[connID]
+	a.sseClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("SSE connection %s not found", connID)
+	}
+	return client.AllEvents(), nil
+}
+
+// GetSSEStatus returns the status of an active SSE connection.
+func (a *App) GetSSEStatus(connID string) (map[string]interface{}, error) {
+	a.sseClientsMu.Lock()
+	client, ok := a.sseClients[connID]
+	a.sseClientsMu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("SSE connection %s not found", connID)
+	}
+	return client.StatusInfo(), nil
 }
 
 // ==================== Storage / Filesystem ====================

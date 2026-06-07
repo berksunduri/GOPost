@@ -17,6 +17,8 @@ const HTTP_METHODS = [
   "HEAD",
   "OPTIONS",
   "GRAPHQL",
+  "WS",
+  "SSE",
 ];
 
 const methodColors = {
@@ -28,6 +30,8 @@ const methodColors = {
   HEAD: "text-gray-400",
   OPTIONS: "text-gray-400",
   GRAPHQL: "text-pink-400",
+  WS: "text-cyan-400",
+  SSE: "text-orange-400",
 };
 
 export function MethodSelector({ value = "GET", onChange, className }) {

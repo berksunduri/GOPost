@@ -109,7 +109,6 @@ export function AppProvider({ children }) {
           api.GetRequestsForCollection(collectionId),
         );
         setRequests(result || []);
-        setSelectedRequestId(null);
         setVirtualRequest(null);
       } catch (e) {
         console.error("Error loading requests:", e);
@@ -122,6 +121,7 @@ export function AppProvider({ children }) {
     (collection) => {
       setSelectedCollectionId(collection?.id || null);
       if (collection?.id) {
+        setSelectedRequestId(null);
         loadRequests(collection.id);
       } else {
         setRequests([]);
