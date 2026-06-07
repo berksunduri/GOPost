@@ -32,10 +32,7 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Install icon tools
-        run: brew install librsvg
-
-      - name: Generate app icons
+      - name: Generate app icons (uses built-in sips, no brew needed)
         run: bash build/appicon/generate.sh
 
       - name: Install frontend deps
@@ -72,6 +69,7 @@ jobs:
             <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
             <key>NSHighResolutionCapable</key><true/>
+            <key>CFBundleIconFile</key><string>icon.icns</string>
           </dict>
           </plist>
           PLIST
@@ -143,6 +141,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "18"
+
+      - name: Install goversioninfo
+        run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+        shell: pwsh
+
+      - name: Generate Windows .syso (version metadata)
+        run: goversioninfo -platform-specific build/windows/versioninfo.json
+        shell: pwsh
 
       - name: Install frontend deps
         run: cd frontend && npm install && cd ..

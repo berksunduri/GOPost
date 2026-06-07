@@ -49,3 +49,6 @@ build/darwin/icon.iconset/
 build/windows/icon.ico
 build/windows/icon.png
 build/linux/icon.png
+
+# Generated Windows resource (from goversioninfo)
+*.syso
