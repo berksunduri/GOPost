@@ -257,8 +257,13 @@ Requires an EV or OV code signing certificate (~$200-400/year from DigiCert, Sec
 ### Without signing
 
 Users can still run the app:
-- **macOS:** Right-click → Open (Gatekeeper bypass)
-- **Windows:** Right-click → Properties → Unblock, or `Unblock-File .\GoPost.exe`
+- **macOS `"damaged"` error:** Run this in Terminal:
+  ```bash
+  xattr -cr /Applications/GoPost.app
+  ```
+  Then open normally.
+- **macOS `"unidentified developer"`:** Right-click the app → Open
+- **Windows:** Right-click `GoPost.exe` → Properties → Unblock, then run
 
 ---
 

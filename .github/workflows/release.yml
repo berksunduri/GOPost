@@ -79,6 +79,9 @@ jobs:
             cp build/darwin/icon.icns "$APP/Contents/Resources/icon.icns"
           fi
 
+          # Ad-hoc sign (prevents "damaged" error — users can Right-click → Open)
+          codesign --deep --force --sign - "$APP"
+
           echo "Created $APP"
 
       - name: Create .dmg
