@@ -183,14 +183,9 @@ jobs:
 
       - name: Generate Windows icon
         run: |
-          magick -background none -density 1024 build/appicon/icon.svg `
-            ( -clone 0 -resize 16x16  ) `
-            ( -clone 0 -resize 32x32  ) `
-            ( -clone 0 -resize 48x48  ) `
-            ( -clone 0 -resize 64x64  ) `
-            ( -clone 0 -resize 256x256 ) `
-            -delete 0 build/windows/icon.ico
-          echo "Icon created: build/windows/icon.ico"
+          magick -background none -density 1024 build/appicon/icon.svg -resize 256x256 build/windows/icon-256.png
+          magick build/windows/icon-256.png -define icon:auto-resize=256,64,48,32,16 build/windows/icon.ico
+          echo "Icon created"
         shell: pwsh
 
       - name: Install goversioninfo
