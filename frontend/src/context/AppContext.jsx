@@ -30,7 +30,6 @@ export function AppProvider({ children }) {
   const [virtualRequest, setVirtualRequest] = useState(null);
   const [openTabs, setOpenTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
-  const [gitStatuses, setGitStatuses] = useState({}); // collectionId → status
 
   const selectedCollection = useMemo(
     () => collections.find((c) => c.id === selectedCollectionId) || null,
@@ -115,6 +114,23 @@ export function AppProvider({ children }) {
       }
     },
     [runWithStatus],
+  );
+
+  const createRequestInCollection = useCallback(
+    async (collectionId) => {
+      const req = await api.CreateRequest(
+        collectionId,
+        "New Request",
+        "GET",
+        "https://api.example.com",
+        {},
+        "",
+        "",
+      );
+      await loadRequests(collectionId);
+      return req;
+    },
+    [loadRequests],
   );
 
   const selectCollection = useCallback(
@@ -203,6 +219,19 @@ export function AppProvider({ children }) {
       await loadRequests(selectedCollectionId);
     }
   }, [selectedCollectionId, loadRequests]);
+
+  const deleteRequest = useCallback(
+    async (requestId, collectionId) => {
+      await api.DeleteRequest(requestId);
+      await loadRequests(collectionId);
+      // Close the tab if it's open for this request
+      setOpenTabs((prev) => prev.filter((t) => t.id !== requestId));
+      if (activeTabId === requestId) {
+        setActiveTabId(null);
+      }
+    },
+    [loadRequests, activeTabId],
+  );
 
   const runCollection = useCallback(async () => {
     if (!selectedCollectionId) return;
@@ -299,19 +328,19 @@ export function AppProvider({ children }) {
       updateTabData,
 
       // Git
-      gitStatuses,
-      setGitStatuses,
 
       // Actions
       createCollection,
       deleteCollection,
       updateCollection,
       selectCollection,
+      createRequestInCollection,
       createEnvironment,
       deleteEnvironment,
       updateEnvironment,
       searchRequests,
       refreshRequests,
+      deleteRequest,
       loadHistory,
       runCollection,
       replayHistoryEntry,
@@ -339,16 +368,17 @@ export function AppProvider({ children }) {
       virtualRequest,
       openTabs,
       activeTabId,
-      gitStatuses,
       createCollection,
       deleteCollection,
       updateCollection,
       selectCollection,
+      createRequestInCollection,
       createEnvironment,
       deleteEnvironment,
       updateEnvironment,
       searchRequests,
       refreshRequests,
+      deleteRequest,
       loadHistory,
       runCollection,
       replayHistoryEntry,

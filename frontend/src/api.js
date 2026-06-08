@@ -492,4 +492,42 @@ export const api = {
       return service.GetSSEStatus(connId);
     return fetchJSON(`/api/sse/status?connId=${encodeURIComponent(connId)}`);
   },
+
+  // Scripting
+  async GetRequestScripts(requestId) {
+    const service = getAppService();
+    if (service && typeof service.GetRequestScripts === "function")
+      return service.GetRequestScripts(requestId);
+    return fetchJSON(`/api/scripts/${encodeURIComponent(requestId)}/get`);
+  },
+  async SetRequestScripts(requestId, preRequestScript, testScript) {
+    const service = getAppService();
+    if (service && typeof service.SetRequestScripts === "function")
+      return service.SetRequestScripts(requestId, preRequestScript, testScript);
+    return fetchJSON(`/api/scripts/${encodeURIComponent(requestId)}/set`, {
+      method: "PUT",
+      body: JSON.stringify({ preRequestScript, testScript }),
+    });
+  },
+  async RunPreRequestScript(requestId, script) {
+    const service = getAppService();
+    if (service && typeof service.RunPreRequestScript === "function")
+      return service.RunPreRequestScript(requestId, script);
+    return fetchJSON(
+      `/api/scripts/${encodeURIComponent(requestId)}/pre-request`,
+      {
+        method: "POST",
+        body: JSON.stringify({ script }),
+      },
+    );
+  },
+  async RunTestScript(requestId, script, response) {
+    const service = getAppService();
+    if (service && typeof service.RunTestScript === "function")
+      return service.RunTestScript(requestId, script, response);
+    return fetchJSON(`/api/scripts/${encodeURIComponent(requestId)}/test`, {
+      method: "POST",
+      body: JSON.stringify({ script, response }),
+    });
+  },
 };

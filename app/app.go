@@ -22,6 +22,7 @@ import (
 	"gopost/app/pkg/gitops"
 	"gopost/app/pkg/models"
 	"gopost/app/pkg/parser"
+	"gopost/app/pkg/scripting"
 	"gopost/app/pkg/sse"
 	"gopost/app/pkg/storage"
 	"gopost/app/pkg/websocket"
@@ -33,6 +34,7 @@ type App struct {
 	storage       *storage.Storage  // Legacy — kept for reference during migration
 	git           *storage.GitStore // New Git-friendly storage
 	termPort      int               // Port for terminal WebSocket server
+	scriptEngine  *scripting.Engine // Starlark scripting engine
 	schemaCacheMu sync.RWMutex
 	schemaCache   map[string]*models.CachedGraphQLSchema // URL → cached schema
 
@@ -57,11 +59,12 @@ func NewApp(dataDir string) *App {
 	}
 
 	return &App{
-		storage:     storage.New(dataDir),         // Legacy storage (for reference)
-		git:         storage.NewGitStore(dataDir), // New Git-friendly storage
-		schemaCache: make(map[string]*models.CachedGraphQLSchema),
-		wsClients:   make(map[string]*websocket.Client),
-		sseClients:  make(map[string]*sse.Client),
+		storage:      storage.New(dataDir),         // Legacy storage (for reference)
+		git:          storage.NewGitStore(dataDir), // New Git-friendly storage
+		scriptEngine: scripting.NewEngine(),        // Starlark scripting engine
+		schemaCache:  make(map[string]*models.CachedGraphQLSchema),
+		wsClients:    make(map[string]*websocket.Client),
+		sseClients:   make(map[string]*sse.Client),
 	}
 }
 
@@ -253,11 +256,28 @@ func (a *App) DeleteRequest(id string) (map[string]bool, error) {
 	return map[string]bool{"ok": true}, err
 }
 
-// ExecuteRequest executes an HTTP request and returns the response
+// ExecuteRequest executes an HTTP request and returns the response.
+// Runs pre-request scripts before sending and test scripts after receiving.
 func (a *App) ExecuteRequest(id string) (map[string]interface{}, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
+	}
+
+	// Collect environment variables
+	env := a.collectEnvVars()
+
+	// Run pre-request script
+	if request.PreRequestScript != "" {
+		modified, err := a.scriptEngine.PreRequestScript(request.PreRequestScript, request, env)
+		if err != nil {
+			return map[string]interface{}{
+				"error":         err.Error(),
+				"script_phase":  "pre-request",
+				"script_failed": true,
+			}, nil
+		}
+		request = modified
 	}
 
 	// Create HTTP request
@@ -342,6 +362,22 @@ func (a *App) ExecuteRequest(id string) (map[string]interface{}, error) {
 		CreatedAt:      time.Now(),
 	}
 	_ = a.git.SaveHistoryEntry(entry)
+
+	// Run test script
+	if request.TestScript != "" {
+		testResult := a.scriptEngine.TestScript(request.TestScript, request, result, env)
+		result["test_result"] = map[string]interface{}{
+			"passed":      testResult.Passed,
+			"error":       testResult.Error,
+			"failures":    testResult.Failures,
+			"duration_ms": testResult.DurationMs,
+		}
+
+		// Apply any environment variable modifications from test script
+		if len(env) > 0 {
+			a.applyEnvFromScript(env)
+		}
+	}
 
 	return result, nil
 }
@@ -1212,6 +1248,120 @@ func (a *App) startTerminalServer() {
 // GetTerminalPort returns the port the terminal WebSocket server is running on.
 func (a *App) GetTerminalPort() int {
 	return a.termPort
+}
+
+// ==================== Scripting ====================
+
+// collectEnvVars gathers environment variables from the active environment.
+func (a *App) collectEnvVars() map[string]string {
+	env := make(map[string]string)
+	// For now, return empty map. Env vars are applied by the frontend
+	// before calling ExecuteRequest. Script env is mainly for chaining.
+	return env
+}
+
+// applyEnvFromScript applies environment variable changes made by scripts
+// back to a "Script" environment or the default environment.
+func (a *App) applyEnvFromScript(env map[string]string) {
+	envs, err := a.git.GetEnvironments()
+	if err != nil {
+		return
+	}
+
+	// Find or create a "Script" environment
+	var scriptEnv *models.Environment
+	for i := range envs {
+		if envs[i].Name == "Script" {
+			scriptEnv = &envs[i]
+			break
+		}
+	}
+
+	if scriptEnv == nil {
+		scriptEnv = &models.Environment{
+			ID:        uuid.New().String(),
+			Name:      "Script",
+			Variables: make(map[string]interface{}),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+	}
+
+	for k, v := range env {
+		scriptEnv.Variables[k] = v
+	}
+	scriptEnv.UpdatedAt = time.Now()
+	_ = a.git.SaveEnvironment(scriptEnv)
+}
+
+// RunPreRequestScript runs a pre-request script and returns the modified request.
+func (a *App) RunPreRequestScript(requestID, script string) (*models.HTTPRequest, error) {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return nil, err
+	}
+
+	env := a.collectEnvVars()
+
+	modified, err := a.scriptEngine.PreRequestScript(script, req, env)
+	if err != nil {
+		return nil, err
+	}
+
+	return modified, nil
+}
+
+// RunTestScript executes a test script against a response and returns the result.
+func (a *App) RunTestScript(requestID, script string, response map[string]interface{}) *scripting.TestResult {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return &scripting.TestResult{
+			Passed: false,
+			Error:  err.Error(),
+		}
+	}
+
+	env := a.collectEnvVars()
+
+	result := a.scriptEngine.TestScript(script, req, response, env)
+
+	if len(env) > 0 {
+		a.applyEnvFromScript(env)
+	}
+
+	return result
+}
+
+// SetRequestScripts sets the pre-request and test scripts for a request.
+func (a *App) SetRequestScripts(requestID string, preRequestScript string, testScript string) (*models.HTTPRequest, error) {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return nil, err
+	}
+
+	req.PreRequestScript = preRequestScript
+	req.TestScript = testScript
+	req.UpdatedAt = time.Now()
+
+	err = a.git.SaveRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// GetRequestScripts returns the scripts for a request.
+func (a *App) GetRequestScripts(requestID string) (map[string]string, error) {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]string{
+		"pre_request_script": req.PreRequestScript,
+		"test_script":        req.TestScript,
+	}, nil
 }
 
 // ==================== Git Operations ====================

@@ -21,19 +21,21 @@ type Folder struct {
 
 // HTTPRequest represents an HTTP request
 type HTTPRequest struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Method       string            `json:"method"`
-	URL          string            `json:"url"`
-	Headers      map[string]string `json:"headers"`
-	Auth         RequestAuth       `json:"auth"`
-	Body         string            `json:"body"`
-	Description  string            `json:"description"`
-	GraphQL      *GraphQLPayload   `json:"graphql,omitempty"`
-	CollectionID string            `json:"collection_id"`
-	FolderID     string            `json:"folder_id,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Method           string            `json:"method"`
+	URL              string            `json:"url"`
+	Headers          map[string]string `json:"headers"`
+	Auth             RequestAuth       `json:"auth"`
+	Body             string            `json:"body"`
+	Description      string            `json:"description"`
+	GraphQL          *GraphQLPayload   `json:"graphql,omitempty"`
+	PreRequestScript string            `json:"pre_request_script,omitempty"`
+	TestScript       string            `json:"test_script,omitempty"`
+	CollectionID     string            `json:"collection_id"`
+	FolderID         string            `json:"folder_id,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 type RequestAuth struct {
@@ -109,33 +111,37 @@ type CollectionManifest struct {
 // RequestFile is a self-contained request stored as its own file.
 // Lives at: collections/{name}/requests/{request-name}.gopost.json
 type RequestFile struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Method      string            `json:"method"`
-	URL         string            `json:"url"`
-	Headers     map[string]string `json:"headers"`
-	Auth        RequestAuth       `json:"auth"`
-	Body        string            `json:"body"`
-	Description string            `json:"description"`
-	GraphQL     *GraphQLPayload   `json:"graphql,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Method           string            `json:"method"`
+	URL              string            `json:"url"`
+	Headers          map[string]string `json:"headers"`
+	Auth             RequestAuth       `json:"auth"`
+	Body             string            `json:"body"`
+	Description      string            `json:"description"`
+	GraphQL          *GraphQLPayload   `json:"graphql,omitempty"`
+	PreRequestScript string            `json:"pre_request_script,omitempty"`
+	TestScript       string            `json:"test_script,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 func (r *RequestFile) ToHTTPRequest(collectionID string) *HTTPRequest {
 	return &HTTPRequest{
-		ID:           r.ID,
-		Name:         r.Name,
-		Method:       r.Method,
-		URL:          r.URL,
-		Headers:      r.Headers,
-		Auth:         r.Auth,
-		Body:         r.Body,
-		Description:  r.Description,
-		GraphQL:      r.GraphQL,
-		CollectionID: collectionID,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
+		ID:               r.ID,
+		Name:             r.Name,
+		Method:           r.Method,
+		URL:              r.URL,
+		Headers:          r.Headers,
+		Auth:             r.Auth,
+		Body:             r.Body,
+		Description:      r.Description,
+		GraphQL:          r.GraphQL,
+		PreRequestScript: r.PreRequestScript,
+		TestScript:       r.TestScript,
+		CollectionID:     collectionID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
 }
 
@@ -156,16 +162,18 @@ type CachedGraphQLSchema struct {
 
 func RequestFileFromHTTPRequest(req *HTTPRequest) *RequestFile {
 	rf := &RequestFile{
-		ID:          req.ID,
-		Name:        req.Name,
-		Method:      req.Method,
-		URL:         req.URL,
-		Headers:     req.Headers,
-		Auth:        req.Auth,
-		Body:        req.Body,
-		Description: req.Description,
-		CreatedAt:   req.CreatedAt,
-		UpdatedAt:   req.UpdatedAt,
+		ID:               req.ID,
+		Name:             req.Name,
+		Method:           req.Method,
+		URL:              req.URL,
+		Headers:          req.Headers,
+		Auth:             req.Auth,
+		Body:             req.Body,
+		Description:      req.Description,
+		PreRequestScript: req.PreRequestScript,
+		TestScript:       req.TestScript,
+		CreatedAt:        req.CreatedAt,
+		UpdatedAt:        req.UpdatedAt,
 	}
 	if req.GraphQL != nil {
 		rf.GraphQL = req.GraphQL

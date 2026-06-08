@@ -3,7 +3,6 @@ import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui";
 import { X, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 
 const methodColors = {
   GET: "text-green-400",
@@ -14,24 +13,34 @@ const methodColors = {
 };
 
 export function TabBar() {
-  const { openTabs, activeTabId, openTab, closeTab, selectedCollection } =
-    useApp();
+  const {
+    openTabs,
+    activeTabId,
+    openTab,
+    closeTab,
+    selectedCollection,
+    collections,
+    selectCollection,
+  } = useApp();
 
   const handleNewTab = () => {
-    if (!selectedCollection?.id) {
-      toast.error("Select a collection first to create a request");
-      return;
+    // Resolve a collection to associate with — first selected, then first available
+    let collId = selectedCollection?.id;
+    if (!collId && collections.length > 0) {
+      collId = collections[0].id;
+      selectCollection(collections[0]);
     }
+
     const tempId = `new-${Date.now()}`;
     openTab({
       id: tempId,
       name: "New Request",
       method: "GET",
-      url: "",
+      url: "https://api.example.com",
       headers: {},
       body: "",
       auth: { type: "none" },
-      collection_id: selectedCollection.id,
+      collection_id: collId || "",
     });
   };
 

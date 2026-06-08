@@ -52,8 +52,32 @@ function App() {
   const [showTerminal, setShowTerminal] = useState(false);
   const [terminalPct, setTerminalPct] = useState(25);
   const [activity, setActivity] = useState("explorer");
+  const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
+
+  const handleSidebarResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        setSidebarWidth(Math.min(Math.max(startW + dx, 200), 500));
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [sidebarWidth],
+  );
 
   const handleTerminalResize = useCallback(
     (e) => {
@@ -282,7 +306,10 @@ function App() {
       <ActivityBar active={activity} onSelect={setActivity} />
 
       {/* Sidebar Panel */}
-      <div className="w-64 bg-sidebar border-r flex flex-col shrink-0">
+      <div
+        className="bg-sidebar border-r flex flex-col shrink-0 relative"
+        style={{ width: sidebarWidth }}
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h1 className="text-base font-bold tracking-tight">GoPost</h1>
           <Select value={themeId} onValueChange={setThemeId}>
@@ -310,6 +337,12 @@ function App() {
           {activity === "git" && <GitPanel />}
           {activity === "history" && <HistoryPanel />}
         </div>
+
+        {/* Resize handle */}
+        <div
+          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30 transition-colors z-10"
+          onMouseDown={handleSidebarResize}
+        />
       </div>
 
       {/* Main area */}

@@ -25,6 +25,7 @@ import { GQLResponseViewer } from "./request/GQLResponseViewer";
 import { ResponseViewer } from "./request/ResponseViewer";
 import { WebSocketEditor } from "./request/WebSocketEditor";
 import { SSEEditor } from "./request/SSEEditor";
+import { ScriptEditor } from "./request/ScriptEditor";
 import { t } from "@/i18n";
 import { api } from "@/api";
 import { parseCurl } from "@/lib/parseCurl";
@@ -36,6 +37,7 @@ function RequestEditor() {
   const {
     selectedCollection,
     selectedEnvironment,
+    collections,
     openTabs,
     activeTabId,
     updateTabData,
@@ -73,6 +75,10 @@ function RequestEditor() {
   const [gqlOperationName, setGQLOperationName] = useState("");
   const [gqlSchemaURL, setGQLSchemaURL] = useState("");
   const [gqlSchemaTree, setGQLSchemaTree] = useState(null);
+
+  // Script state
+  const [preRequestScript, setPreRequestScript] = useState("");
+  const [testScript, setTestScript] = useState("");
 
   const isGraphQL = method === "GRAPHQL";
   const isWS = method === "WS";
@@ -126,6 +132,10 @@ function RequestEditor() {
     setGQLOperationName(gql?.operation_name || "");
     setGQLSchemaURL(gql?.schema_url || "");
     setGQLSchemaTree(null); // Will re-fetch if needed
+
+    // Script fields
+    setPreRequestScript(request.pre_request_script || "");
+    setTestScript(request.test_script || "");
 
     // Set active tab based on request type
     if (request.method === "GRAPHQL") {
@@ -227,10 +237,52 @@ function RequestEditor() {
         auth.apiKeyValue,
         auth.apiKeyIn,
       );
+      // Save scripts
+      await api.SetRequestScripts(updated.id, preRequestScript, testScript);
       updateTabData(request.id, { request: updated, isDirty: false });
       return updated;
     }
-    if (!selectedCollection?.id) throw new Error("No collection selected");
+    if (!selectedCollection?.id) {
+      if (collections.length > 0) {
+        setSelectedRequest(collections[0]);
+        // Use the first collection directly since state update is async
+        const created = await api.CreateRequest(
+          collections[0].id,
+          name || "New Request",
+          method,
+          u,
+          h,
+          b,
+          "",
+        );
+        await api.SetRequestAuth(
+          created.id,
+          authType,
+          auth.token,
+          auth.username,
+          auth.password,
+          auth.apiKey,
+          auth.apiKeyValue,
+          auth.apiKeyIn,
+        );
+        await api.SetRequestScripts(created.id, preRequestScript, testScript);
+        if (request?.id?.startsWith("new-")) {
+          updateTabData(request.id, {
+            id: created.id,
+            request: created,
+            isDirty: false,
+          });
+          openTab(created);
+        }
+        setSelectedRequest(created);
+        await refreshRequests();
+        return created;
+      }
+      throw new Error(
+        "Create a collection first — click + in the Collections panel",
+      );
+    }
+
     const created = await api.CreateRequest(
       selectedCollection.id,
       name || "New Request",
@@ -250,6 +302,8 @@ function RequestEditor() {
       auth.apiKeyValue,
       auth.apiKeyIn,
     );
+    // Save scripts for new request
+    await api.SetRequestScripts(created.id, preRequestScript, testScript);
     if (isGraphQL) {
       await api.SetRequestGraphQL(
         created.id,
@@ -279,6 +333,7 @@ function RequestEditor() {
   }, [
     request,
     selectedCollection,
+    collections,
     name,
     method,
     effectiveURL,
@@ -290,12 +345,15 @@ function RequestEditor() {
     applyEnv,
     updateTabData,
     openTab,
+    refreshRequests,
     isGraphQL,
     isConnectionMode,
     gqlQuery,
     gqlVariables,
     gqlOperationName,
     gqlSchemaURL,
+    preRequestScript,
+    testScript,
   ]);
 
   const handleSend = useCallback(async () => {
@@ -312,7 +370,15 @@ function RequestEditor() {
         ? await api.ExecuteGraphQLRequest(req.id)
         : await api.ExecuteRequest(req.id);
       setResponse(result);
-      if (isGraphQL) {
+
+      // Auto-switch to appropriate tab based on script results
+      if (result?.script_failed && result?.script_phase === "pre-request") {
+        setActiveTabName("pre-request");
+        toast.error(result.error || "Pre-request script failed");
+      } else if (result?.test_result?.passed === false) {
+        setActiveTabName("tests");
+        toast.error("Test script failed — see Tests tab");
+      } else if (isGraphQL) {
         setActiveTabName("gql-response");
       } else {
         setActiveTabName("response");
@@ -437,8 +503,9 @@ function RequestEditor() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3 p-4">
         <Send className="h-10 w-10 opacity-20" />
-        <p className="text-sm">
-          Open a request or click <strong>+ New Tab</strong> to start
+        <p className="text-sm text-center">
+          Open a request from the Collections panel,{` `}
+          or click <strong>+ New Tab</strong> above to start fresh
         </p>
       </div>
     );
@@ -547,6 +614,12 @@ function RequestEditor() {
                 <TabsTrigger value="body" className="text-xs">
                   {t("body")}
                 </TabsTrigger>
+                <TabsTrigger value="pre-request" className="text-xs">
+                  Pre-request
+                </TabsTrigger>
+                <TabsTrigger value="tests" className="text-xs">
+                  Tests
+                </TabsTrigger>
                 <TabsTrigger value="response" className="text-xs">
                   {t("response")}
                 </TabsTrigger>
@@ -635,6 +708,21 @@ function RequestEditor() {
                     body={body}
                     onModeChange={setBodyMode}
                     onBodyChange={setBody}
+                  />
+                </TabsContent>
+                <TabsContent value="pre-request" className="h-full">
+                  <ScriptEditor
+                    script={preRequestScript}
+                    onChange={setPreRequestScript}
+                    label="Pre-request Script"
+                  />
+                </TabsContent>
+                <TabsContent value="tests" className="h-full">
+                  <ScriptEditor
+                    script={testScript}
+                    onChange={setTestScript}
+                    label="Test Script"
+                    testResult={response?.test_result}
                   />
                 </TabsContent>
                 <TabsContent value="response" className="h-full">

@@ -504,6 +504,52 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.ExecCommand(payload.Command)
 		writeJSON(w, data, err)
 		return
+
+	// Scripting operations
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/get"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/get")
+		data, err := appInstance.GetRequestScripts(id)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/set"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/set")
+		var payload struct {
+			PreRequestScript string `json:"preRequestScript"`
+			TestScript       string `json:"testScript"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.SetRequestScripts(id, payload.PreRequestScript, payload.TestScript)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/pre-request"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/pre-request")
+		var payload struct {
+			Script string `json:"script"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.RunPreRequestScript(id, payload.Script)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/test"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/test")
+		var payload struct {
+			Script   string                 `json:"script"`
+			Response map[string]interface{} `json:"response"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data := appInstance.RunTestScript(id, payload.Script, payload.Response)
+		writeJSON(w, data, nil)
+		return
+
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})

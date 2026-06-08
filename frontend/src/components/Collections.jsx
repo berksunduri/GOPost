@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import {
   Button,
@@ -15,11 +15,13 @@ import {
   Pencil,
   Trash2,
   FolderOpen,
+  Folder,
   ChevronRight,
   ChevronDown,
   FolderSearch,
   FileDown,
   FileUp,
+  FilePlus,
 } from "lucide-react";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -38,6 +40,8 @@ function Collections() {
     requests,
     openTab,
     loadRequests,
+    createRequestInCollection,
+    deleteRequest,
   } = useApp();
 
   const [showDialog, setShowDialog] = useState(false);
@@ -45,15 +49,28 @@ function Collections() {
   const [editingId, setEditingId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [expanded, setExpanded] = useState({});
+  const [creatingRequestId, setCreatingRequestId] = useState(null);
   const fileInputRef = useRef(null);
+  const dialogInputRef = useRef(null);
 
-  const toggleExpand = (id) => setExpanded((p) => ({ ...p, [id]: !p[id] }));
+  const toggleExpand = useCallback(
+    async (col) => {
+      const isOpen = expanded[col.id];
+      setExpanded((p) => ({ ...p, [col.id]: !isOpen }));
+      if (!isOpen) {
+        selectCollection(col);
+        await loadRequests(col.id);
+      }
+    },
+    [expanded, selectCollection, loadRequests],
+  );
 
   const openCreate = () => {
     setEditingId(null);
     setDialogName("");
     setShowDialog(true);
   };
+
   const openRename = (col) => {
     setEditingId(col.id);
     setDialogName(col.name);
@@ -73,16 +90,34 @@ function Collections() {
     setShowDialog(false);
   };
 
+  const handleCreateRequest = async (collectionId) => {
+    setCreatingRequestId(collectionId);
+    try {
+      const req = await createRequestInCollection(collectionId);
+      if (req) {
+        openTab(req);
+        if (!expanded[collectionId]) {
+          setExpanded((p) => ({ ...p, [collectionId]: true }));
+        }
+        toast.success(`New request created`);
+      }
+    } catch (e) {
+      toast.error(e.message || "Failed to create request");
+    } finally {
+      setCreatingRequestId(null);
+    }
+  };
+
   // --- .http file import ---
-  const handleImportHTTP = async (collectionId) => {
-    fileInputRef.current?.click();
+  const handleImportHTTP = (collectionId) => {
     fileInputRef.current._targetCollectionId = collectionId;
+    fileInputRef.current?.click();
   };
 
   const handleFileSelected = async (e) => {
     const file = e.target.files?.[0];
     const collectionId = e.target._targetCollectionId;
-    e.target.value = ""; // Reset so same file can be re-selected
+    e.target.value = "";
     if (!file || !collectionId) return;
 
     try {
@@ -97,7 +132,6 @@ function Collections() {
     }
   };
 
-  // --- .http file export ---
   const handleExportHTTP = async (collectionId, collectionName) => {
     try {
       const result = await api.ExportCollectionAsHTTPFile(collectionId);
@@ -118,6 +152,8 @@ function Collections() {
       HEAD: "text-gray-400",
       OPTIONS: "text-gray-400",
       GRAPHQL: "text-pink-400",
+      WS: "text-cyan-400",
+      SSE: "text-orange-400",
     };
     return colors[method] || "text-gray-400";
   };
@@ -133,22 +169,25 @@ function Collections() {
         onChange={handleFileSelected}
       />
 
+      {/* Header */}
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
           {t("collections")}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="icon"
+            className="h-6 w-6"
             onClick={() => {
               if (selectedCollection?.id) {
                 handleImportHTTP(selectedCollection.id);
+              } else if (collections.length > 0) {
+                handleImportHTTP(collections[0].id);
               } else {
-                toast.error("Select a collection first");
+                toast.error("Create a collection first");
               }
             }}
-            className="h-6 w-6"
             title="Import .http file"
           >
             <FileUp className="h-3.5 w-3.5" />
@@ -158,6 +197,7 @@ function Collections() {
             size="icon"
             onClick={openCreate}
             className="h-6 w-6"
+            title="New collection"
           >
             <Plus className="h-3.5 w-3.5" />
           </Button>
@@ -166,28 +206,42 @@ function Collections() {
 
       <ScrollArea className="flex-1 px-2 pb-1">
         {collections.length === 0 ? (
-          <div className="text-xs text-muted-foreground py-6 text-center">
-            {isLoading.collections ? t("loading") : t("noCollectionsYet")}
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <Folder className="h-8 w-8 text-muted-foreground/30" />
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                {isLoading.collections ? t("loading") : t("noCollectionsYet")}
+              </p>
+              {!isLoading.collections && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={openCreate}
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  New Collection
+                </Button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="space-y-0.5">
             {collections.map((col) => {
               const isActive = selectedCollection?.id === col.id;
               const isOpen = expanded[col.id];
-              const colRequests = isActive ? requests : [];
+              const colRequests = isOpen ? requests : [];
 
               return (
                 <div key={col.id}>
+                  {/* Collection row */}
                   <div className="group relative">
                     <button
-                      onClick={() => {
-                        selectCollection(col);
-                        toggleExpand(col.id);
-                      }}
+                      onClick={() => toggleExpand(col)}
                       className={cn(
-                        "w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-sm text-left transition-colors",
+                        "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm text-left transition-colors",
                         isActive
-                          ? "bg-primary/20 text-foreground font-medium"
+                          ? "bg-primary/15 text-foreground"
                           : "hover:bg-accent text-foreground/80",
                       )}
                     >
@@ -196,19 +250,41 @@ function Collections() {
                       ) : (
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       )}
-                      <FolderOpen
-                        className={cn(
-                          "h-4 w-4 shrink-0",
-                          isActive ? "text-primary" : "text-muted-foreground",
-                        )}
-                      />
-                      <span className="truncate flex-1">{col.name}</span>
+                      {isOpen ? (
+                        <FolderOpen
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            isActive ? "text-primary" : "text-muted-foreground",
+                          )}
+                        />
+                      ) : (
+                        <Folder
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            isActive ? "text-primary" : "text-muted-foreground",
+                          )}
+                        />
+                      )}
+                      <span className="truncate flex-1 min-w-0 text-[13px]">
+                        {col.name}
+                      </span>
                     </button>
-                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-0.5 bg-card/80 rounded p-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
+
+                    {/* Action buttons — absolute overlay on hover, never affects layout */}
+                    <div className="absolute right-0.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-px bg-card/90 backdrop-blur-sm rounded px-0.5 py-0.5">
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                        title="New request"
+                        disabled={creatingRequestId === col.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCreateRequest(col.id);
+                        }}
+                      >
+                        <FilePlus className="h-3 w-3" />
+                      </button>
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                         title="Export as .http"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -216,33 +292,19 @@ function Collections() {
                         }}
                       >
                         <FileDown className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
+                      </button>
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                        title="Rename"
                         onClick={(e) => {
                           e.stopPropagation();
                           openRename(col);
                         }}
                       >
                         <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmDelete(col);
-                        }}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
+                      </button>
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                         title="Reveal in Finder"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -252,37 +314,72 @@ function Collections() {
                         }}
                       >
                         <FolderSearch className="h-3 w-3" />
-                      </Button>
+                      </button>
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors"
+                        title="Delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(col);
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
                     </div>
                   </div>
 
                   {/* Nested requests */}
-                  {isOpen && isActive && (
-                    <div className="ml-5 border-l border-border pl-2 space-y-0.5">
+                  {isOpen && (
+                    <div className="ml-4 border-l border-border/60 pl-2 space-y-0.5 mt-0.5">
+                      {/* "New request" quick-add row */}
+                      <button
+                        onClick={() => handleCreateRequest(col.id)}
+                        disabled={creatingRequestId === col.id}
+                        className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-left text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent/50 transition-colors"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>New request</span>
+                      </button>
+
                       {colRequests.length === 0 ? (
-                        <div className="text-[10px] text-muted-foreground py-1.5 pl-2">
-                          No requests
+                        <div className="text-[11px] text-muted-foreground/40 py-1 pl-6 italic">
+                          Empty collection
                         </div>
                       ) : (
                         colRequests.map((req) => (
-                          <button
+                          <div
                             key={req.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openTab(req);
-                            }}
-                            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-xs text-left text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                            className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs text-left text-muted-foreground hover:text-foreground hover:bg-accent transition-colors group/req"
                           >
-                            <span
-                              className={cn(
-                                "text-[9px] font-mono font-bold shrink-0 w-10",
-                                methodColor(req.method),
-                              )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectCollection(col);
+                                openTab(req);
+                              }}
+                              className="flex items-center gap-1.5 flex-1 min-w-0"
                             >
-                              {req.method}
-                            </span>
-                            <span className="truncate">{req.name}</span>
-                          </button>
+                              <span
+                                className={cn(
+                                  "text-[10px] font-mono font-bold shrink-0 w-10",
+                                  methodColor(req.method),
+                                )}
+                              >
+                                {req.method}
+                              </span>
+                              <span className="truncate">{req.name}</span>
+                            </button>
+                            <button
+                              className="hidden group-hover/req:flex shrink-0 hover:text-destructive p-0.5 rounded"
+                              title="Delete request"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteRequest(req.id, col.id);
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
                         ))
                       )}
                     </div>
@@ -294,6 +391,7 @@ function Collections() {
         )}
       </ScrollArea>
 
+      {/* Create/Rename dialog */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -302,6 +400,7 @@ function Collections() {
             </DialogTitle>
           </DialogHeader>
           <Input
+            ref={dialogInputRef}
             value={dialogName}
             onChange={(e) => setDialogName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
@@ -319,6 +418,7 @@ function Collections() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete confirmation dialog */}
       <Dialog
         open={!!confirmDelete}
         onOpenChange={() => setConfirmDelete(null)}
