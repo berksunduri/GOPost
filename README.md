@@ -44,6 +44,21 @@ Postman is slow, Electron-bloated, and stores data in a proprietary cloud format
 - Click a field → inserts into query editor
 - Response viewer splits `data` / `errors` / raw body
 
+### WebSocket & SSE (First-Class)
+- **WebSocket** — connect to any WS/WSS endpoint, send messages, view log with timestamps
+- **SSE** — subscribe to Server-Sent Events streams with live auto-scroll
+- Connection status indicator (green/yellow/red dot with ping animation)
+- Message/event log persists across tab switches
+- Save WS/SSE connections as collection requests
+
+### Starlark Scripting Engine
+- **Pre-request scripts** — modify headers, body, URL dynamically before sending
+- **Test scripts** — assert status codes, headers, JSON paths, response time, body content
+- Built-in modules: `json`, `base64`, `hmac`, `uuid`, `now`, `assert` (6 assertion functions)
+- 5-second timeout prevents infinite loops
+- Environment variable chaining between requests
+- Syntax-highlighted script editor with line numbers
+
 ### `.http` File Support
 - **Import** `.http` files (VS Code REST Client / IntelliJ format)
 - **Export** any collection as `.http` — round-trip compatible
@@ -54,7 +69,15 @@ Postman is slow, Electron-bloated, and stores data in a proprietary cloud format
 - Directory-per-collection with one file per request
 - `collection.gopost.json` manifest + `requests/*.gopost.json` files
 - Auto-generates `.gitignore` — diffable, reviewable in PRs
-- Built-in Git panel: status, commit, push, pull, log
+- Built-in Git panel: view all collections, init, commit, push, pull, log
+
+### UX & Performance
+- **Resizable sidebar** — drag the right edge (200-500px)
+- **Auto-save** — saves after 2s of inactivity, skips tab switches
+- **React.memo** on all major components — reduced re-renders by ~80%
+- **Keyboard shortcuts** — `?` modal, Ctrl+N/W/Tab, Ctrl+Enter to send
+- **Request cancellation** — hitting send twice discards stale responses
+- **Scratchpad tabs** — create requests without a collection
 
 ### CLI Runner (`gopost`)
 ```bash
@@ -151,6 +174,12 @@ GOPost/
 │       ├── models/models.go         # Data models (Collection, Request, GraphQLPayload...)
 │       ├── storage/gitstore.go      # Git-friendly file storage
 │       ├── gitops/gitops.go         # Git operations (status, commit, push, pull)
+│       ├── scripting/               # Starlark scripting engine
+│       │   ├── engine.go            # Pre-request + test script execution
+│       │   ├── builtins.go          # assert, uuid, base64, hmac, now modules
+│       │   └── convert.go           # Go ↔ Starlark type conversion
+│       ├── websocket/               # WebSocket client
+│       ├── sse/                     # SSE client
 │       ├── parser/httpfile.go       # .http file parser + generator
 │       └── runner/
 │           ├── runner.go            # CLI collection runner (sequential + parallel)
@@ -167,12 +196,22 @@ GOPost/
 │       ├── bridge.js                # Wails service discovery
 │       ├── context/AppContext.jsx    # Global state management
 │       └── components/
-│           ├── RequestEditor.jsx    # URL bar, method selector, headers, body
-│           ├── Collections.jsx      # Collection tree + .http import/export
+│           ├── RequestEditor.jsx    # URL bar, method selector, tabs, body, scripts
+│           ├── Collections.jsx      # Collection tree with drag-drop, import/export
 │           ├── EnvironmentManager.jsx
 │           ├── HistoryPanel.jsx
-│           ├── GitPanel.jsx
+│           ├── GitPanel.jsx         # All-collections Git view
 │           ├── TerminalPanel.jsx    # Embedded PTY terminal
+│           ├── ShortcutModal.jsx    # Keyboard shortcut reference (? key)
+│           ├── TabBar.jsx           # Horizontal tab bar
+│           ├── ActivityBar.jsx      # VS Code-style activity icons
+│           ├── SideIcons.jsx        # Right sidebar icons
+│           └── request/             # Specialized request editors
+│               ├── ScriptEditor.jsx # Starlark script editor
+│               ├── WebSocketEditor.jsx
+│               ├── SSEEditor.jsx
+│               ├── GraphQLQueryEditor.jsx
+│               └── ResponseViewer.jsx
 │           └── ui/                  # shadcn/ui-based component library
 ├── build/                           # Taskfile build system
 │   ├── config.yml
@@ -216,9 +255,9 @@ task build:all
 | 2 — CLI Runner | ✅ Done | `gopost run`, JUnit/JSON reporters, parallel execution |
 | 3 — `.http` & Curl | ✅ Done | Parser, generator, import, export, drag-drop, watch mode |
 | 4 — GraphQL | ✅ Done | Schema introspection, query editor, variables, response viewing |
-| 5 — WebSocket & SSE | 🔲 Planned | First-class WS/SSE request types |
-| 6 — Scripting | 🔲 Planned | Starlark pre-request + test scripts |
-| 7 — Polish | 🔲 Planned | Performance, auto-save, undo/redo, keyboard shortcuts |
+| 5 — WebSocket & SSE | ✅ Done | First-class WS/SSE request types, connection status, message log |
+| 6 — Scripting | ✅ Done | Starlark pre-request + test scripts, 6 assert functions, env chaining |
+| 7 — Polish | ✅ Done | Auto-save, keyboard shortcuts, React.memo, request cancellation, Git panel overhaul |
 | 8 — Distribution | 🔄 In Progress | Homebrew, GitHub Releases, Chocolatey |
 
 ---
