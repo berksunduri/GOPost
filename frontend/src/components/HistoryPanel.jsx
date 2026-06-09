@@ -144,4 +144,4 @@ function HistoryPanel({ width }) {
   );
 }
 
-export default HistoryPanel;
+export default React.memo(HistoryPanel);

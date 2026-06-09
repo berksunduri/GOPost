@@ -14,6 +14,7 @@ import RequestEditor from "@/components/RequestEditor";
 import EnvironmentManager from "@/components/EnvironmentManager";
 import HistoryPanel from "@/components/HistoryPanel";
 import { TabBar } from "@/components/TabBar";
+import { ShortcutModal } from "@/components/ShortcutModal";
 import { TerminalPanel } from "@/components/TerminalPanel";
 import { GitPanel } from "@/components/GitPanel";
 import { ActivityBar } from "@/components/ActivityBar";
@@ -29,6 +30,7 @@ const TERMINAL_ENABLED = false;
 function App() {
   const {
     selectedCollection,
+    collections,
     errorMessage,
     loadingState,
     lastRunReport,
@@ -43,12 +45,18 @@ function App() {
     loadHistory,
     runCollection,
     loadRequests,
+    openTabs,
+    activeTabId,
+    openTab,
+    closeTab,
+    selectCollection,
   } = useApp();
 
   const { themeId, setThemeId, themeList } = useTheme();
   const importInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const [importModeState, setImportModeState] = React.useState("replace");
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const [terminalPct, setTerminalPct] = useState(25);
   const [activity, setActivity] = useState("explorer");
@@ -136,6 +144,80 @@ function App() {
         );
     }
   }, [lastRunReport]);
+
+  // Global shortcuts: tab nav, new/close tab, help modal
+  React.useEffect(() => {
+    const onKey = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const el = document.activeElement;
+
+      // Show keyboard shortcuts modal
+      if (
+        e.key === "?" &&
+        !mod &&
+        el?.tagName !== "INPUT" &&
+        el?.tagName !== "TEXTAREA"
+      ) {
+        e.preventDefault();
+        setShowShortcuts(true);
+        return;
+      }
+
+      // New tab (Ctrl+N)
+      if (mod && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        let collId = selectedCollection?.id;
+        if (!collId && collections.length > 0) {
+          collId = collections[0].id;
+          selectCollection?.(collections[0]);
+        }
+        const tempId = `new-${Date.now()}`;
+        openTab({
+          id: tempId,
+          name: "New Request",
+          method: "GET",
+          url: "https://api.example.com",
+          headers: {},
+          body: "",
+          auth: { type: "none" },
+          collection_id: collId || "",
+        });
+        return;
+      }
+
+      // Close tab (Ctrl+W)
+      if (mod && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        if (activeTabId) closeTab(activeTabId);
+        return;
+      }
+
+      // Tab switching
+      if (mod && e.key === "Tab") {
+        e.preventDefault();
+        if (openTabs.length === 0) return;
+        const idx = openTabs.findIndex((t) => t.id === activeTabId);
+        if (e.shiftKey) {
+          const prev = idx <= 0 ? openTabs.length - 1 : idx - 1;
+          openTab(openTabs[prev].request);
+        } else {
+          const next = idx >= openTabs.length - 1 ? 0 : idx + 1;
+          openTab(openTabs[next].request);
+        }
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    openTabs,
+    activeTabId,
+    openTab,
+    closeTab,
+    selectedCollection,
+    collections,
+    selectCollection,
+  ]);
 
   const handleImport = async (e) => {
     const file = e?.target?.files?.[0];
@@ -480,6 +562,10 @@ function App() {
           </div>
         </div>
       </div>
+      <ShortcutModal
+        open={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
     </div>
   );
 }

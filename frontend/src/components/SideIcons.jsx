@@ -3,7 +3,7 @@ import { Button } from "@/components/ui";
 import { Clock, PanelRightClose } from "lucide-react";
 import HistoryPanel from "@/components/HistoryPanel";
 
-export function SideIcons() {
+export const SideIcons = React.memo(function SideIcons() {
   const [showHistory, setShowHistory] = useState(false);
 
   return (
@@ -45,4 +45,4 @@ export function SideIcons() {
       </div>
     </div>
   );
-}
+});

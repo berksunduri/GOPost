@@ -85,8 +85,14 @@ function RequestEditor() {
   const isSSE = method === "SSE";
   const isConnectionMode = isWS || isSSE;
 
+  // Auto-save & send-sequence refs
+  const suppressAutoSaveRef = useRef(false);
+  const autoSaveTimer = useRef(null);
+  const sendSeqRef = useRef(0);
+
   // Sync state when the active tab changes
   useEffect(() => {
+    suppressAutoSaveRef.current = true;
     if (!request) {
       // Reset for empty state
       setName("");
@@ -96,7 +102,6 @@ function RequestEditor() {
       setHeaders([{ key: "", value: "" }]);
       setResponse(null);
       setAuthType("none");
-      setActiveTabName("headers");
       setGQLQuery("");
       setGQLVariables("");
       setGQLOperationName("");
@@ -136,16 +141,40 @@ function RequestEditor() {
     // Script fields
     setPreRequestScript(request.pre_request_script || "");
     setTestScript(request.test_script || "");
-
-    // Set active tab based on request type
-    if (request.method === "GRAPHQL") {
-      setActiveTabName("gql-query");
-    } else if (request.method === "WS" || request.method === "SSE") {
-      setActiveTabName("connection");
-    } else {
-      setActiveTabName("headers");
-    }
   }, [activeTabId]);
+
+  // Only set initial tab when activeTabId actually changes (save doesn't reset it)
+  const prevActiveTabId = useRef(activeTabId);
+  useEffect(() => {
+    if (prevActiveTabId.current === activeTabId) return;
+    prevActiveTabId.current = activeTabId;
+    if (request?.method === "GRAPHQL") setActiveTabName("gql-query");
+    else if (request?.method === "WS" || request?.method === "SSE")
+      setActiveTabName("connection");
+    else setActiveTabName("headers");
+  }, [activeTabId]);
+
+  // Auto-save after 2s of inactivity (suppressed on tab switch)
+  useEffect(() => {
+    if (!request?.id || request.id.startsWith("new-")) return;
+    if (suppressAutoSaveRef.current) {
+      suppressAutoSaveRef.current = false;
+      return;
+    }
+    clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      handleSave();
+    }, 2000);
+    return () => clearTimeout(autoSaveTimer.current);
+  }, [
+    name,
+    method,
+    url,
+    body,
+    JSON.stringify(headers),
+    preRequestScript,
+    testScript,
+  ]);
 
   const envVars = selectedEnvironment?.variables || {};
 
@@ -363,12 +392,16 @@ function RequestEditor() {
       toast.error("Please enter a URL");
       return;
     }
+    sendSeqRef.current += 1;
+    const seq = sendSeqRef.current;
     setLoading(true);
     try {
       const req = await upsertRequest();
+      if (seq !== sendSeqRef.current) return;
       const result = isGraphQL
         ? await api.ExecuteGraphQLRequest(req.id)
         : await api.ExecuteRequest(req.id);
+      if (seq !== sendSeqRef.current) return;
       setResponse(result);
 
       // Auto-switch to appropriate tab based on script results
@@ -389,9 +422,10 @@ function RequestEditor() {
       toast.success(`${statusCode} ${timeMs ? `in ${timeMs}ms` : ""}`);
       await refreshRequests();
     } catch (e) {
+      if (seq !== sendSeqRef.current) return;
       toast.error(e.message || "Request failed");
     } finally {
-      setLoading(false);
+      if (seq === sendSeqRef.current) setLoading(false);
     }
   }, [
     url,
@@ -748,4 +782,4 @@ function RequestEditor() {
   );
 }
 
-export default RequestEditor;
+export default React.memo(RequestEditor);

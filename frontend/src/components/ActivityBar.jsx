@@ -8,7 +8,10 @@ const icons = [
   { id: "history", icon: Clock, label: "History" },
 ];
 
-export function ActivityBar({ active, onSelect }) {
+export const ActivityBar = React.memo(function ActivityBar({
+  active,
+  onSelect,
+}) {
   return (
     <div className="flex flex-col items-center gap-0.5 py-2 w-12 bg-sidebar border-r shrink-0">
       {icons.map(({ id, icon: Icon, label }) => (
@@ -17,7 +20,10 @@ export function ActivityBar({ active, onSelect }) {
           variant={active === id ? "default" : "ghost"}
           size="icon"
           className="h-9 w-9 rounded-none border-l-2"
-          style={{ borderLeftColor: active === id ? "hsl(var(--primary))" : "transparent" }}
+          style={{
+            borderLeftColor:
+              active === id ? "hsl(var(--primary))" : "transparent",
+          }}
           onClick={() => onSelect(id)}
           title={label}
         >
@@ -26,6 +32,6 @@ export function ActivityBar({ active, onSelect }) {
       ))}
     </div>
   );
-}
+});
 
 export { icons };

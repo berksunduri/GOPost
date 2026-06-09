@@ -91,7 +91,7 @@ function TestResultBadge({ result }) {
   );
 }
 
-export function ScriptEditor({
+export const ScriptEditor = React.memo(function ScriptEditor({
   script = "",
   onChange,
   label,
@@ -267,4 +267,4 @@ export function ScriptEditor({
       </details>
     </div>
   );
-}
+});

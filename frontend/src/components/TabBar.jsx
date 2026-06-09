@@ -12,7 +12,7 @@ const methodColors = {
   PATCH: "text-purple-400",
 };
 
-export function TabBar() {
+export const TabBar = React.memo(function TabBar() {
   const {
     openTabs,
     activeTabId,
@@ -109,4 +109,4 @@ export function TabBar() {
       </button>
     </div>
   );
-}
+});

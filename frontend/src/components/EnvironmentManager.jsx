@@ -247,4 +247,4 @@ function EnvironmentManager() {
   );
 }
 
-export default EnvironmentManager;
+export default React.memo(EnvironmentManager);
