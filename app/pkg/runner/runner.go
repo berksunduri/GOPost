@@ -5,6 +5,7 @@
 package runner
 
 import (
+	"net"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,8 +65,21 @@ type HTTPExecutor struct {
 	Client *http.Client
 }
 
+var sharedTransport = &http.Transport{
+	DialContext: (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   20,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+	ForceAttemptHTTP2:     true,
+}
+
 var DefaultExecutor = &HTTPExecutor{
-	Client: &http.Client{Timeout: 30 * time.Second},
+	Client: &http.Client{Transport: sharedTransport.Clone(), Timeout: 30 * time.Second},
 }
 
 // Execute sends an HTTP request and returns the result.
@@ -110,7 +124,7 @@ func Run(cfg Config) (*Result, error) {
 	}
 
 	executor := &HTTPExecutor{
-		Client: &http.Client{Timeout: cfg.Timeout},
+		Client: &http.Client{Transport: sharedTransport.Clone(), Timeout: cfg.Timeout},
 	}
 
 	start := time.Now()

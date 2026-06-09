@@ -1,6 +1,10 @@
 import React, { useRef, useState, useCallback } from "react";
-import { useApp } from "@/context/AppContext";
-import { useTheme } from "@/context/ThemeContext";
+import { useAppStatus } from "@/context/AppStatusContext";
+import { useCollections } from "@/context/CollectionsContext";
+import { useEnvironments } from "@/context/EnvironmentsContext";
+import { useHistory } from "@/context/HistoryContext";
+import { useRequests } from "@/context/RequestsContext";
+import { useTabs } from "@/context/TabsContext";
 import { Button, Input, Separator, Badge } from "@/components/ui";
 import {
   Select,
@@ -14,13 +18,13 @@ import RequestEditor from "@/components/RequestEditor";
 import EnvironmentManager from "@/components/EnvironmentManager";
 import HistoryPanel from "@/components/HistoryPanel";
 import { TabBar } from "@/components/TabBar";
-import { ShortcutModal } from "@/components/ShortcutModal";
 import { TerminalPanel } from "@/components/TerminalPanel";
 import { GitPanel } from "@/components/GitPanel";
 import { ActivityBar } from "@/components/ActivityBar";
+import { SettingsModal } from "@/components/settings/SettingsModal";
 import { t } from "@/i18n";
 import { api } from "@/api";
-import { Palette, Terminal } from "lucide-react";
+import { Terminal, Plus, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
 import "./App.css";
 
@@ -29,8 +33,6 @@ const TERMINAL_ENABLED = false;
 
 function App() {
   const {
-    selectedCollection,
-    collections,
     errorMessage,
     loadingState,
     lastRunReport,
@@ -39,30 +41,38 @@ function App() {
     setSearchQuery,
     setErrorMessage,
     setLastRunReport,
-    searchRequests,
+  } = useAppStatus();
+  const {
+    selectedCollection,
+    collections,
     loadCollections,
-    loadEnvironments,
-    loadHistory,
     runCollection,
-    loadRequests,
-    openTabs,
-    activeTabId,
-    openTab,
-    closeTab,
     selectCollection,
-  } = useApp();
+    createCollection,
+  } = useCollections();
+  const { loadEnvironments } = useEnvironments();
+  const { loadHistory } = useHistory();
+  const { loadRequests, searchRequests } = useRequests();
+  const { openTabs, activeTabId, openTab, closeTab, restoreTabIds } = useTabs();
 
-  const { themeId, setThemeId, themeList } = useTheme();
   const importInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const [importModeState, setImportModeState] = React.useState("replace");
-  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("appearance");
+
+  const openSettings = useCallback((section = "appearance") => {
+    setSettingsSection(section);
+    setShowSettings(true);
+  }, []);
   const [showTerminal, setShowTerminal] = useState(false);
   const [terminalPct, setTerminalPct] = useState(25);
   const [activity, setActivity] = useState("explorer");
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
+
+  const hasRestoredTabs = useRef(false);
 
   const handleSidebarResize = useCallback(
     (e) => {
@@ -126,10 +136,14 @@ function App() {
         e.preventDefault();
         setShowTerminal((s) => !s);
       }
+      if (mod && e.key === ",") {
+        e.preventDefault();
+        openSettings("appearance");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [openSettings]);
 
   React.useEffect(() => {
     if (lastRunReport) {
@@ -145,13 +159,58 @@ function App() {
     }
   }, [lastRunReport]);
 
+
+  // Restore open tabs from previous session after data loads
+  React.useEffect(() => {
+    if (hasRestoredTabs.current) return;
+    if (loadingState.collections || loadingState.requests) return;
+    if (collections.length === 0) {
+      hasRestoredTabs.current = true;
+      return;
+    }
+
+    const saved = restoreTabIds();
+    if (!saved) {
+      hasRestoredTabs.current = true;
+      return;
+    }
+
+    // Load requests for all collections, then restore matching tabs
+    (async () => {
+      const allRequests = [];
+      for (const col of collections) {
+        try {
+          const reqs = await api.GetRequestsForCollection(col.id);
+          if (reqs) allRequests.push(...reqs);
+        } catch {
+          // Ignore individual load failures
+        }
+      }
+
+      // Open tabs for saved IDs that match loaded requests
+      const requestMap = new Map(allRequests.map((r) => [r.id, r]));
+      let activeRequest = null;
+      for (const id of saved.ids) {
+        const req = requestMap.get(id);
+        if (req) {
+          openTab(req);
+          if (id === saved.activeId) activeRequest = req;
+        }
+      }
+      // Restore active tab if possible
+      if (activeRequest) {
+        openTab(activeRequest);
+      }
+      hasRestoredTabs.current = true;
+    })();
+  }, [loadingState.collections, loadingState.requests, collections, openTab, restoreTabIds]);
+
   // Global shortcuts: tab nav, new/close tab, help modal
   React.useEffect(() => {
     const onKey = (e) => {
       const mod = e.ctrlKey || e.metaKey;
       const el = document.activeElement;
 
-      // Show keyboard shortcuts modal
       if (
         e.key === "?" &&
         !mod &&
@@ -159,7 +218,7 @@ function App() {
         el?.tagName !== "TEXTAREA"
       ) {
         e.preventDefault();
-        setShowShortcuts(true);
+        openSettings("keybindings");
         return;
       }
 
@@ -217,6 +276,7 @@ function App() {
     selectedCollection,
     collections,
     selectCollection,
+    openSettings,
   ]);
 
   const handleImport = async (e) => {
@@ -385,28 +445,21 @@ function App() {
         </div>
       )}
       {/* Activity Bar — far left */}
-      <ActivityBar active={activity} onSelect={setActivity} />
+      <ActivityBar
+        active={activity}
+        onSelect={setActivity}
+        onOpenSettings={() => openSettings("appearance")}
+      />
 
       {/* Sidebar Panel */}
       <div
         className="bg-sidebar border-r flex flex-col shrink-0 relative"
         style={{ width: sidebarWidth }}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h1 className="text-base font-bold tracking-tight">GoPost</h1>
-          <Select value={themeId} onValueChange={setThemeId}>
-            <SelectTrigger className="w-[130px] h-7 text-xs">
-              <Palette className="h-3 w-3 mr-1" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {themeList.map((t) => (
-                <SelectItem key={t.id} value={t.id} className="text-xs">
-                  {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center px-4 py-3 border-b">
+          <h1 className="text-base font-bold tracking-tight">
+            {t("appTitle")}
+          </h1>
         </div>
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activity === "explorer" && (
@@ -542,9 +595,75 @@ function App() {
         <div id="main-area" className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0">
             <TabBar />
-            <div className="flex-1 min-h-0">
-              <RequestEditor />
-            </div>
+            {openTabs.length === 0 && collections.length === 0 ? (
+              /* First-run empty state: no tabs and no collections */
+              <div className="flex-1 flex items-center justify-center min-h-0">
+                <div className="flex flex-col items-center gap-5 text-center max-w-sm">
+                  <div className="rounded-full bg-muted p-4">
+                    <FilePlus2 className="h-10 w-10 text-muted-foreground/40" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {t("emptyStateTitle")}
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {t("emptyStateDescription")}
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 w-48">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => createCollection("My Collection")}
+                    >
+                      <Plus className="h-4 w-4 mr-1.5" />
+                      {t("emptyStateCTA")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setShowSettings(true)}
+                    >
+                      {t("emptyStateOpenGuide")}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/50">
+                    {t("emptyStateNoRequestDesc")}{" "}
+                    <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">
+                      Ctrl+N
+                    </kbd>{" "}
+                    {t("emptyStateNoRequestCTA")}
+                  </p>
+                </div>
+              </div>
+            ) : openTabs.length === 0 ? (
+              /* No tab open but collections exist */
+              <div className="flex-1 flex items-center justify-center min-h-0">
+                <div className="flex flex-col items-center gap-4 text-center">
+                  <div className="rounded-full bg-muted p-3">
+                    <Plus className="h-8 w-8 text-muted-foreground/40" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {t("emptyStateNoRequest")}
+                    </p>
+                    <p className="text-xs text-muted-foreground/60">
+                      {t("emptyStateNoRequestDesc")}{" "}
+                      <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">
+                        Ctrl+N
+                      </kbd>{" "}
+                      {t("emptyStateNoRequestCTA")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0">
+                <RequestEditor />
+              </div>
+            )}
             {TERMINAL_ENABLED && showTerminal && (
               <>
                 <div
@@ -562,9 +681,10 @@ function App() {
           </div>
         </div>
       </div>
-      <ShortcutModal
-        open={showShortcuts}
-        onClose={() => setShowShortcuts(false)}
+      <SettingsModal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        defaultSection={settingsSection}
       />
     </div>
   );

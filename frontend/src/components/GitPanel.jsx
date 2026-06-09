@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { useApp } from "@/context/AppContext";
+import { useCollections } from "@/context/CollectionsContext";
 import { Button } from "@/components/ui";
 import {
   GitBranch, Plus, Check, FileText, GitCommit,
@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const GitPanel = React.memo(function GitPanel() {
-  const { collections, selectCollection } = useApp();
+  const { collections, selectCollection } = useCollections();
   const [statuses, setStatuses] = useState({});
   const [expanded, setExpanded] = useState({});
   const [commitMsgs, setCommitMsgs] = useState({});

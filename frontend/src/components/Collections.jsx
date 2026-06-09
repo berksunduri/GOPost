@@ -1,5 +1,8 @@
 import React, { useState, useRef, useCallback } from "react";
-import { useApp } from "@/context/AppContext";
+import { useCollections } from "@/context/CollectionsContext";
+import { useRequests } from "@/context/RequestsContext";
+import { useTabs } from "@/context/TabsContext";
+import { useAppStatus } from "@/context/AppStatusContext";
 import {
   Button,
   Input,
@@ -22,6 +25,7 @@ import {
   FileDown,
   FileUp,
   FilePlus,
+  Copy,
 } from "lucide-react";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -32,17 +36,19 @@ function Collections() {
   const {
     collections,
     selectedCollection,
-    isLoading,
     selectCollection,
     createCollection,
     deleteCollection,
     updateCollection,
-    requests,
-    openTab,
+  } = useCollections();
+  const { isLoading } = useAppStatus();
+  const {
+    getRequestsForCollection,
     loadRequests,
     createRequestInCollection,
     deleteRequest,
-  } = useApp();
+  } = useRequests();
+  const { openTab } = useTabs();
 
   const [showDialog, setShowDialog] = useState(false);
   const [dialogName, setDialogName] = useState("");
@@ -54,15 +60,18 @@ function Collections() {
   const dialogInputRef = useRef(null);
 
   const toggleExpand = useCallback(
-    async (col) => {
-      const isOpen = expanded[col.id];
-      setExpanded((p) => ({ ...p, [col.id]: !isOpen }));
-      if (!isOpen) {
+    (col) => {
+      let shouldSelect = false;
+      setExpanded((p) => {
+        const isOpen = p[col.id];
+        shouldSelect = !isOpen;
+        return { ...p, [col.id]: !isOpen };
+      });
+      if (shouldSelect) {
         selectCollection(col);
-        await loadRequests(col.id);
       }
     },
-    [expanded, selectCollection, loadRequests],
+    [selectCollection],
   );
 
   const openCreate = () => {
@@ -142,6 +151,16 @@ function Collections() {
     }
   };
 
+  const handleDuplicateRequest = async (req, collectionId) => {
+    try {
+      const duplicated = await api.DuplicateRequest(req.id);
+      toast.success(`Duplicated \"${req.name}\" → \"${duplicated.name}\"`);
+      loadRequests(collectionId);
+    } catch (err) {
+      toast.error(err.message || "Failed to duplicate request");
+    }
+  };
+
   const methodColor = (method) => {
     const colors = {
       GET: "text-green-400",
@@ -206,22 +225,44 @@ function Collections() {
 
       <ScrollArea className="flex-1 px-2 pb-1">
         {collections.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <Folder className="h-8 w-8 text-muted-foreground/30" />
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">
+          <div className="flex flex-col items-center gap-4 py-10 px-4 text-center">
+            <Folder className="h-10 w-10 text-muted-foreground/20" />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground">
                 {isLoading.collections ? t("loading") : t("noCollectionsYet")}
               </p>
               {!isLoading.collections && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={openCreate}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  New Collection
-                </Button>
+                <>
+                  <p className="text-xs text-muted-foreground/60 max-w-[200px]">
+                    {t("emptyStateDescription")}
+                  </p>
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={openCreate}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      {t("emptyStateCTA")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        if (selectedCollection?.id) {
+                          handleImportHTTP(selectedCollection.id);
+                        } else {
+                          openCreate();
+                        }
+                      }}
+                    >
+                      <FileUp className="h-3 w-3 mr-1" />
+                      Import .http File
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -230,7 +271,9 @@ function Collections() {
             {collections.map((col) => {
               const isActive = selectedCollection?.id === col.id;
               const isOpen = expanded[col.id];
-              const colRequests = isOpen ? requests : [];
+              const colRequests = isOpen
+                ? (getRequestsForCollection(col.id) ?? [])
+                : [];
 
               return (
                 <div key={col.id}>
@@ -368,6 +411,16 @@ function Collections() {
                                 {req.method}
                               </span>
                               <span className="truncate">{req.name}</span>
+                            </button>
+                            <button
+                              className="hidden group-hover/req:flex shrink-0 hover:text-foreground p-0.5 rounded"
+                              title="Duplicate request"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDuplicateRequest(req, col.id);
+                              }}
+                            >
+                              <Copy className="h-3 w-3" />
                             </button>
                             <button
                               className="hidden group-hover/req:flex shrink-0 hover:text-destructive p-0.5 rounded"

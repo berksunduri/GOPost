@@ -1,5 +1,7 @@
 import React, { useState, lazy, Suspense } from "react";
-import { useApp } from "@/context/AppContext";
+import { useCollections } from "@/context/CollectionsContext";
+import { useHistory } from "@/context/HistoryContext";
+import { useTabs } from "@/context/TabsContext";
 import { Button, ScrollArea, Badge } from "@/components/ui";
 import { RotateCcw, ExternalLink, Clock, Loader2 } from "lucide-react";
 import { t } from "@/i18n";
@@ -7,15 +9,9 @@ import { api } from "@/api";
 import { toast } from "sonner";
 
 function HistoryPanel({ width }) {
-  const {
-    history,
-    collections,
-    selectedCollectionId,
-    setSelectedCollectionId,
-    openTab,
-    loadHistory,
-    loadRequests,
-  } = useApp();
+  const { history, loadHistory } = useHistory();
+  const { collections, selectCollection } = useCollections();
+  const { openTab } = useTabs();
 
   const [replayingId, setReplayingId] = useState(null);
 
@@ -35,11 +31,10 @@ function HistoryPanel({ width }) {
   };
 
   const handleOpenInEditor = (entry) => {
-    if (entry.collection_id && entry.collection_id !== selectedCollectionId) {
+    if (entry.collection_id) {
       const match = collections.find((c) => c.id === entry.collection_id);
       if (match) {
-        setSelectedCollectionId(match.id);
-        loadRequests(match.id);
+        selectCollection(match);
       }
     }
     openTab({

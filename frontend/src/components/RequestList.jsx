@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { useApp } from "@/context/AppContext";
+import { useCollections } from "@/context/CollectionsContext";
+import { useRequests } from "@/context/RequestsContext";
 import {
   Button,
   ScrollArea,
@@ -21,14 +22,14 @@ import { api } from "@/api";
 import { toast } from "sonner";
 
 function RequestList() {
+  const { collections } = useCollections();
   const {
     requests,
     selectedRequestId,
-    collections,
     setSelectedRequestId,
     setVirtualRequest,
     refreshRequests,
-  } = useApp();
+  } = useRequests();
 
   const [deleteTarget, setDeleteTarget] = useState(null);
 

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { useApp } from "@/context/AppContext";
+import { useEnvironments } from "@/context/EnvironmentsContext";
+import { useAppStatus } from "@/context/AppStatusContext";
 import {
   Button,
   Input,
@@ -19,12 +20,12 @@ function EnvironmentManager() {
   const {
     environments,
     selectedEnvironment,
-    isLoading,
     setSelectedEnvironmentId,
     createEnvironment,
     deleteEnvironment,
     updateEnvironment,
-  } = useApp();
+  } = useEnvironments();
+  const { isLoading } = useAppStatus();
 
   const [showDialog, setShowDialog] = useState(false);
   const [dialogName, setDialogName] = useState("");

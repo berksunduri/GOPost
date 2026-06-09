@@ -35,6 +35,7 @@ type App struct {
 	git           *storage.GitStore // New Git-friendly storage
 	termPort      int               // Port for terminal WebSocket server
 	scriptEngine  *scripting.Engine // Starlark scripting engine
+	httpClient    *http.Client      // Shared HTTP client with connection pooling
 	schemaCacheMu sync.RWMutex
 	schemaCache   map[string]*models.CachedGraphQLSchema // URL → cached schema
 
@@ -62,9 +63,31 @@ func NewApp(dataDir string) *App {
 		storage:      storage.New(dataDir),         // Legacy storage (for reference)
 		git:          storage.NewGitStore(dataDir), // New Git-friendly storage
 		scriptEngine: scripting.NewEngine(),        // Starlark scripting engine
+		httpClient:   newSharedHTTPClient(),        // Pooled HTTP client
 		schemaCache:  make(map[string]*models.CachedGraphQLSchema),
 		wsClients:    make(map[string]*websocket.Client),
 		sseClients:   make(map[string]*sse.Client),
+	}
+}
+
+// newSharedHTTPClient creates an HTTP client with connection pooling
+// for reuse across all request executions.
+func newSharedHTTPClient() *http.Client {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
 	}
 }
 
@@ -305,7 +328,7 @@ func (a *App) ExecuteRequest(id string) (map[string]interface{}, error) {
 	}
 
 	// Execute request
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := a.httpClient
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -807,7 +830,7 @@ func (a *App) IntrospectGraphQLSchema(endpointURL string) (map[string]interface{
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := a.httpClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("introspection failed: %w", err)
@@ -899,7 +922,7 @@ func (a *App) ExecuteGraphQLRequest(id string) (map[string]interface{}, error) {
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := a.httpClient
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {

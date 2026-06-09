@@ -5,7 +5,10 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { useApp } from "@/context/AppContext";
+import { useCollections } from "@/context/CollectionsContext";
+import { useEnvironments } from "@/context/EnvironmentsContext";
+import { useRequests } from "@/context/RequestsContext";
+import { useTabs } from "@/context/TabsContext";
 import {
   Tabs,
   TabsContent,
@@ -13,6 +16,7 @@ import {
   TabsTrigger,
   Separator,
 } from "@/components/ui";
+import { URLBar } from "./request/URLBar";
 import { MethodSelector } from "./request/MethodSelector";
 import { HeadersEditor } from "./request/HeadersEditor";
 import { AuthEditor } from "./request/AuthEditor";
@@ -34,17 +38,17 @@ import { Send } from "lucide-react";
 import { Button, Input } from "@/components/ui";
 
 function RequestEditor() {
+  const { selectedCollection, collections } = useCollections();
+  const { selectedEnvironment } = useEnvironments();
+  const { refreshRequests, setSelectedRequest } = useRequests();
   const {
-    selectedCollection,
-    selectedEnvironment,
-    collections,
     openTabs,
     activeTabId,
     updateTabData,
-    refreshRequests,
-    setSelectedRequest,
     openTab,
-  } = useApp();
+    markDirty,
+    markSaved,
+  } = useTabs();
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const request = activeTab?.request;
@@ -161,9 +165,11 @@ function RequestEditor() {
       suppressAutoSaveRef.current = false;
       return;
     }
+    // Mark tab as dirty when user edits
+    markDirty(request.id);
     clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      handleSave();
+      handleSave(true);
     }, 2000);
     return () => clearTimeout(autoSaveTimer.current);
   }, [
@@ -268,7 +274,8 @@ function RequestEditor() {
       );
       // Save scripts
       await api.SetRequestScripts(updated.id, preRequestScript, testScript);
-      updateTabData(request.id, { request: updated, isDirty: false });
+      updateTabData(request.id, { request: updated });
+      markSaved(request.id);
       return updated;
     }
     if (!selectedCollection?.id) {
@@ -299,8 +306,8 @@ function RequestEditor() {
           updateTabData(request.id, {
             id: created.id,
             request: created,
-            isDirty: false,
           });
+          markSaved(request.id);
           openTab(created);
         }
         setSelectedRequest(created);
@@ -353,8 +360,8 @@ function RequestEditor() {
       updateTabData(request.id, {
         id: created.id,
         request: created,
-        isDirty: false,
       });
+      markSaved(request.id);
       openTab(created);
     }
     setSelectedRequest(created);
@@ -557,43 +564,36 @@ function RequestEditor() {
           placeholder={t("requestName")}
           className="flex-1 min-w-[100px] max-w-[200px] h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
         />
-        <div className="flex-1 flex items-center gap-2 min-w-[200px]">
-          <Input
-            type="url"
-            value={url}
-            onChange={(e) => setURL(e.target.value)}
-            onPaste={handleURLPaste}
-            placeholder={
-              isGraphQL
-                ? "https://api.example.com/graphql"
-                : isWS
-                  ? "wss://echo.example.com/ws"
-                  : isSSE
-                    ? "https://api.example.com/events"
-                    : "https://api.example.com/endpoint — paste a curl command here"
-            }
-            className="flex-1 font-mono text-sm"
-          />
-          {isGraphQL && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setShowSchemaExplorer((v) => !v)}
-            >
-              {showSchemaExplorer ? "Hide Schema" : "Schema"}
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={handleSave}>
-            {t("saveRequest")}
-          </Button>
-          {!isConnectionMode && (
-            <Button onClick={handleSend} disabled={loading} size="sm">
-              <Send className="h-4 w-4" />
-              {loading ? t("sending") : t("send")}
-            </Button>
-          )}
-        </div>
+        <URLBar
+          url={url}
+          onChange={setURL}
+          onSend={handleSend}
+          loading={loading}
+          onSave={handleSave}
+          onPaste={handleURLPaste}
+          envVars={envVars}
+          placeholder={
+            isGraphQL
+              ? "https://api.example.com/graphql"
+              : isWS
+                ? "wss://echo.example.com/ws"
+                : isSSE
+                  ? "https://api.example.com/events"
+                  : "https://api.example.com/endpoint — paste a curl command here"
+          }
+          extraButtons={
+            isGraphQL && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setShowSchemaExplorer((v) => !v)}
+              >
+                {showSchemaExplorer ? "Hide Schema" : "Schema"}
+              </Button>
+            )
+          }
+        />
       </div>
 
       <Separator />
