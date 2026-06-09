@@ -35,7 +35,7 @@ Postman is slow, Electron-bloated, and stores data in a proprietary cloud format
 - **All HTTP methods** — GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, GRAPHQL
 - **Headers, body, auth** — Bearer token, Basic auth, API key (header or query)
 - **Environments** — `{{variable}}` substitution in URLs, headers, and body
-- **Response viewer** — Pretty-printed JSON, raw body, headers, timing
+- **Response viewer** — Pretty-printed JSON, raw body, search (Ctrl+F), copy to clipboard
 
 ### GraphQL (First-Class)
 - Query editor with syntax highlighting placeholder
@@ -73,11 +73,12 @@ Postman is slow, Electron-bloated, and stores data in a proprietary cloud format
 
 ### UX & Performance
 - **Resizable sidebar** — drag the right edge (200-500px)
-- **Auto-save** — saves after 2s of inactivity, skips tab switches
-- **React.memo** on all major components — reduced re-renders by ~80%
-- **Keyboard shortcuts** — `?` modal, Ctrl+N/W/Tab, Ctrl+Enter to send
-- **Request cancellation** — hitting send twice discards stale responses
-- **Scratchpad tabs** — create requests without a collection
+- **Tab management** — horizontal scroll, Ctrl+Tab cycling, persistence across restarts
+- **Auto-save** — saves after 2s of inactivity with visual dirty/saved indicators
+- **Keyboard shortcuts** — `?` to see all, Ctrl+N/W/Tab, Ctrl+Enter to send, Ctrl+F to search
+- **Request duplication** — right-click any request to copy it
+- **Variable preview** — hover `{{VARIABLES}}` to see resolved values inline
+- **Drag & drop** — drop `.http` files anywhere on the window
 
 ### CLI Runner (`gopost`)
 ```bash
@@ -109,19 +110,17 @@ gopost run my-api && echo "All passed"
 
 ---
 
-## Screenshots
-
-<!-- TODO: add screenshots -->
-*Coming soon — dark-themed desktop app with activity bar, collection explorer, request editor, and response viewer.*
-
----
-
 ## Installation
 
 ### macOS
 ```bash
 brew tap berksunduri/GOPost
 brew install gopost
+```
+
+### Windows
+```powershell
+choco install gopost
 ```
 
 ### Download Binary
@@ -133,6 +132,7 @@ Download the latest release from [GitHub Releases](https://github.com/berksundur
 | macOS (Intel) | `gopost-darwin-amd64.tar.gz` |
 | Linux (x86_64) | `gopost-linux-amd64.tar.gz` |
 | Linux (ARM64) | `gopost-linux-arm64.tar.gz` |
+| Windows (x86_64) | `gopost-windows-amd64.zip` |
 
 ### Build from Source
 
@@ -141,11 +141,6 @@ Download the latest release from [GitHub Releases](https://github.com/berksundur
 ```bash
 git clone https://github.com/berksunduri/GOPost.git
 cd GOPost
-
-# Install Wails CLI
-go install github.com/wailsapp/wails/v3/cmd/wails@latest
-
-# Install frontend dependencies
 cd frontend && npm install && cd ..
 
 # Development (hot reload)
@@ -160,155 +155,6 @@ go build -ldflags "-X main.version=$(git describe --tags --always)" -o bin/gopos
 
 ---
 
-## Project Structure
-
-```
-GOPost/
-├── main.go                          # Wails v3 entry point
-├── wails.json                       # Wails configuration
-├── go.mod                           # Go module
-├── app/
-│   ├── app.go                       # All Go→React method bindings
-│   ├── features.go                  # Feature flags
-│   └── pkg/
-│       ├── models/models.go         # Data models (Collection, Request, GraphQLPayload...)
-│       ├── storage/gitstore.go      # Git-friendly file storage
-│       ├── gitops/gitops.go         # Git operations (status, commit, push, pull)
-│       ├── scripting/               # Starlark scripting engine
-│       │   ├── engine.go            # Pre-request + test script execution
-│       │   ├── builtins.go          # assert, uuid, base64, hmac, now modules
-│       │   └── convert.go           # Go ↔ Starlark type conversion
-│       ├── websocket/               # WebSocket client
-│       ├── sse/                     # SSE client
-│       ├── parser/httpfile.go       # .http file parser + generator
-│       └── runner/
-│           ├── runner.go            # CLI collection runner (sequential + parallel)
-│           └── reporters/
-│               ├── console.go       # Pretty terminal output
-│               ├── junit.go         # JUnit XML reporter
-│               └── json.go          # JSON reporter
-├── cmd/
-│   └── gopost/main.go              # CLI entry point (run, watch)
-├── frontend/
-│   └── src/
-│       ├── App.jsx                  # Main app with drag-drop support
-│       ├── api.js                   # HTTP API + Wails bridge
-│       ├── bridge.js                # Wails service discovery
-│       ├── context/AppContext.jsx    # Global state management
-│       └── components/
-│           ├── RequestEditor.jsx    # URL bar, method selector, tabs, body, scripts
-│           ├── Collections.jsx      # Collection tree with drag-drop, import/export
-│           ├── EnvironmentManager.jsx
-│           ├── HistoryPanel.jsx
-│           ├── GitPanel.jsx         # All-collections Git view
-│           ├── TerminalPanel.jsx    # Embedded PTY terminal
-│           ├── ShortcutModal.jsx    # Keyboard shortcut reference (? key)
-│           ├── TabBar.jsx           # Horizontal tab bar
-│           ├── ActivityBar.jsx      # VS Code-style activity icons
-│           ├── SideIcons.jsx        # Right sidebar icons
-│           └── request/             # Specialized request editors
-│               ├── ScriptEditor.jsx # Starlark script editor
-│               ├── WebSocketEditor.jsx
-│               ├── SSEEditor.jsx
-│               ├── GraphQLQueryEditor.jsx
-│               └── ResponseViewer.jsx
-│           └── ui/                  # shadcn/ui-based component library
-├── build/                           # Taskfile build system
-│   ├── config.yml
-│   ├── darwin/Taskfile.yml
-│   ├── linux/Taskfile.yml
-│   └── windows/Taskfile.yml
-└── .github/
-    ├── actions/run-collection/      # GitHub Action
-    └── homebrew/gopost.rb           # Homebrew formula
-```
-
----
-
-## Development
-
-```bash
-# Install Wails
-go install github.com/wailsapp/wails/v3/cmd/wails@latest
-
-# Dev mode with hot reload
-wails dev
-
-# Run tests
-go test ./...
-
-# Build CLI
-task build:cli        # or: go build -o bin/gopost ./cmd/gopost/
-
-# Build all (GUI + CLI)
-task build:all
-```
-
----
-
-## Roadmap
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 0 — Foundation | ✅ Done | Wails + React + Go architecture |
-| 1 — Git Storage | ✅ Done | Directory-per-collection, one-file-per-request |
-| 2 — CLI Runner | ✅ Done | `gopost run`, JUnit/JSON reporters, parallel execution |
-| 3 — `.http` & Curl | ✅ Done | Parser, generator, import, export, drag-drop, watch mode |
-| 4 — GraphQL | ✅ Done | Schema introspection, query editor, variables, response viewing |
-| 5 — WebSocket & SSE | ✅ Done | First-class WS/SSE request types, connection status, message log |
-| 6 — Scripting | ✅ Done | Starlark pre-request + test scripts, 6 assert functions, env chaining |
-| 7 — Polish | ✅ Done | Auto-save, keyboard shortcuts, React.memo, request cancellation, Git panel overhaul |
-| 8 — Distribution | 🔄 In Progress | Homebrew, GitHub Releases, Chocolatey |
-
----
-
-## Code Signing (optional)
-
-To eliminate OS security warnings (Gatekeeper on macOS, SmartScreen on Windows),
-add these secrets to your GitHub repo:
-
-### macOS (Apple Developer ID + Notarization)
-
-Requires an Apple Developer account ($99/year):
-
-| Secret | Description |
-|--------|-------------|
-| `APPLE_DEVELOPER_CERT` | Base64 of your Developer ID Application .p12 certificate |
-| `APPLE_CERT_PASSWORD` | Password for the .p12 certificate |
-| `APPLE_TEAM_ID` | Your Apple Developer Team ID (10 chars) |
-| `APPLE_NOTARY_APPLE_ID` | Apple ID email for notarization |
-| `APPLE_NOTARY_PASSWORD` | App-specific password for notarization |
-
-```bash
-# Encode your cert for GitHub Secrets
-base64 -i developer_id.p12 | pbcopy
-```
-
-### Windows (Authenticode)
-
-Requires an EV or OV code signing certificate (~$200-400/year from DigiCert, Sectigo):
-
-| Secret | Description |
-|--------|-------------|
-| `WINDOWS_SIGNING_CERT` | Base64 of your .pfx code signing certificate |
-| `WINDOWS_SIGNING_PASSWORD` | Password for the .pfx certificate |
-
-### Without signing
-
-Until the app is notarized, macOS shows a security warning. This is normal
-for open-source apps — even VLC and Firefox direct downloads show it.
-
-**One-time bypass (choose either):**
-
-**Option A — Right-click:** Right-click `GoPost.app` in Finder → **Open** → click **Open**.
-
-**Option B — System Settings:** Go to **System Settings → Privacy & Security**, scroll
-to the bottom, click **Open Anyway** next to "GoPost was blocked."
-
-**Windows:** Right-click `GoPost.exe` → Properties → **Unblock**, then run.
-
----
-
 ## Contributing
 
 GoPost is MIT-licensed and welcomes contributions!
@@ -318,8 +164,6 @@ GoPost is MIT-licensed and welcomes contributions!
 3. Make your changes
 4. Run tests (`go test ./...`)
 5. Open a PR against `main`
-
-See [`plans/IMPLEMENTATION_ROADMAP.md`](plans/IMPLEMENTATION_ROADMAP.md) for the full technical plan.
 
 ---
 
