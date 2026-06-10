@@ -37,8 +37,11 @@ function HistoryPanel({ width }) {
         selectCollection(match);
       }
     }
+    // Use a new- prefix so save creates a new request (not tries to update
+    // a potentially-deleted one). This also handles orphaned history entries
+    // whose original collection was deleted.
     openTab({
-      id: entry.request_id || `hist-${entry.id}`,
+      id: `new-hist-${entry.id}`,
       name: entry.request_name || entry.url || "Request",
       method: entry.method,
       url: entry.url,

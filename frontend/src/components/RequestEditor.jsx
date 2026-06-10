@@ -36,6 +36,7 @@ import { parseCurl } from "@/lib/parseCurl";
 import { toast } from "sonner";
 import { Send } from "lucide-react";
 import { Button, Input } from "@/components/ui";
+import { CodeGenMenu } from "@/components/CodeGenMenu";
 
 function RequestEditor() {
   const { selectedCollection, collections } = useCollections();
@@ -582,16 +583,28 @@ function RequestEditor() {
                   : "https://api.example.com/endpoint — paste a curl command here"
           }
           extraButtons={
-            isGraphQL && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setShowSchemaExplorer((v) => !v)}
-              >
-                {showSchemaExplorer ? "Hide Schema" : "Schema"}
-              </Button>
-            )
+            <>
+              {!isConnectionMode && (
+                <CodeGenMenu
+                  request={{
+                    method,
+                    url,
+                    headers,
+                    body,
+                  }}
+                />
+              )}
+              {isGraphQL && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setShowSchemaExplorer((v) => !v)}
+                >
+                  {showSchemaExplorer ? "Hide Schema" : "Schema"}
+                </Button>
+              )}
+            </>
           }
         />
       </div>

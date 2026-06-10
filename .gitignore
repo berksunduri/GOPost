@@ -52,3 +52,5 @@ build/linux/icon.png
 
 # Generated Windows resource (from goversioninfo)
 *.syso
+
+/plans

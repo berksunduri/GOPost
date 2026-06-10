@@ -211,6 +211,19 @@ export const api = {
     if (service) return service.GetHistory();
     return fetchJSON("/api/history");
   },
+  async GetUserConfig() {
+    const service = getAppService();
+    if (service) return service.GetUserConfig();
+    return fetchJSON("/api/user-config");
+  },
+  async SaveUserConfig(cfg) {
+    const service = getAppService();
+    if (service) return service.SaveUserConfig(cfg);
+    return fetchJSON("/api/user-config", {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
   async ReplayHistoryEntry(entryId) {
     const service = getAppService();
     if (service) return service.ReplayHistoryEntry(entryId);

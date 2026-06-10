@@ -94,6 +94,15 @@ const dictionary = {
   activityGit: "Source Control",
   activityHistory: "History",
   activitySettings: "Settings",
+  beautifyJSON: "Beautify JSON",
+  unbeautify: "Show raw",
+  copyAsCode: "Copy as code",
+  code: "Code",
+  copiedCode: "Code copied!",
+  clickToRebind: "Click a keybinding to change it. Press Escape to cancel.",
+  capturingShortcut: "Press desired key combination...",
+  shortcutConflict: "This combination is used by",
+  resetShortcut: "Reset to default",
 };
 
 export function t(key) {

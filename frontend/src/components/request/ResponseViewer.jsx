@@ -7,35 +7,28 @@ import React, {
 } from "react";
 import { Badge, ScrollArea } from "@/components/ui";
 import { t } from "@/i18n";
-import { Copy, Check, Search, X, ChevronUp, ChevronDown } from "lucide-react";
+import { useTheme } from "@/context/ThemeContext";
+import {
+  Copy,
+  Check,
+  Search,
+  X,
+  ChevronUp,
+  ChevronDown,
+  Braces,
+} from "lucide-react";
+import { isJSON, beautifyJSON, highlightJSON } from "@/lib/json";
 
 export function ResponseViewer({ response }) {
   const [copied, setCopied] = useState(false);
+  const [beautified, setBeautified] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
   const searchInputRef = useRef(null);
   const bodyContainerRef = useRef(null);
-
-  const handleCopy = useCallback(async () => {
-    if (!response?.body) return;
-    try {
-      await navigator.clipboard.writeText(response.body);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = response.body;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }, [response?.body]);
+  const { themeId } = useTheme();
+  const isLight = themeId === "light";
 
   // Ctrl+F / Cmd+F to toggle search
   useEffect(() => {
@@ -64,9 +57,50 @@ export function ResponseViewer({ response }) {
     }
   }, [searchOpen]);
 
-  // Build highlighted body with matches
+  // JSON detection
+  const bodyIsJSON = useMemo(
+    () => isJSON(response?.body, response?.headers),
+    [response?.body, response?.headers],
+  );
+
+  // Compute display body: beautified or raw
+  const displayBody = useMemo(() => {
+    const raw = response?.body || "";
+    if (beautified && bodyIsJSON) return beautifyJSON(raw);
+    return raw;
+  }, [response?.body, beautified, bodyIsJSON]);
+
+  const handleCopy = useCallback(async () => {
+    const text = displayBody;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [displayBody]);
+
+  // Syntax-highlighted HTML for JSON (only when not searching)
+  const jsonHTML = useMemo(() => {
+    if (searchOpen && searchQuery.trim()) return null;
+    if (!bodyIsJSON) return null;
+    return highlightJSON(displayBody, isLight);
+  }, [bodyIsJSON, displayBody, searchOpen, searchQuery, isLight]);
+
+  // Build highlighted body with matches (search takes priority)
   const { highlightedBody, matchCount } = useMemo(() => {
-    const body = response?.body || "";
+    const body = displayBody;
     if (!searchOpen || !searchQuery.trim()) {
       return { highlightedBody: body, matchCount: 0 };
     }
@@ -119,7 +153,7 @@ export function ResponseViewer({ response }) {
       highlightedBody: parts,
       matchCount: count,
     };
-  }, [response?.body, searchOpen, searchQuery]);
+  }, [displayBody, searchOpen, searchQuery]);
 
   // Scroll current match into view
   useEffect(() => {
@@ -181,6 +215,19 @@ export function ResponseViewer({ response }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {bodyIsJSON && (
+            <button
+              onClick={() => setBeautified((prev) => !prev)}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                beautified
+                  ? "text-blue-400 bg-blue-500/10 hover:bg-blue-500/20"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+              }`}
+              title={beautified ? t("unbeautify") : t("beautifyJSON")}
+            >
+              <Braces className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             onClick={() => setSearchOpen((prev) => !prev)}
             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -270,24 +317,28 @@ export function ResponseViewer({ response }) {
           ref={bodyContainerRef}
           className="p-4 text-xs font-mono whitespace-pre-wrap break-words"
         >
-          {Array.isArray(highlightedBody)
-            ? highlightedBody.map((part, i) =>
-                part.isMatch ? (
-                  <mark
-                    key={i}
-                    className={
-                      part.matchIdx === currentMatchIdx
-                        ? "search-current bg-orange-400/50 text-inherit rounded-sm"
-                        : "bg-yellow-400/25 text-inherit rounded-sm"
-                    }
-                  >
-                    {part.text}
-                  </mark>
-                ) : (
-                  <span key={i}>{part.text}</span>
-                ),
-              )
-            : highlightedBody || ""}
+          {Array.isArray(highlightedBody) ? (
+            highlightedBody.map((part, i) =>
+              part.isMatch ? (
+                <mark
+                  key={i}
+                  className={
+                    part.matchIdx === currentMatchIdx
+                      ? "search-current bg-orange-400/50 text-inherit rounded-sm"
+                      : "bg-yellow-400/25 text-inherit rounded-sm"
+                  }
+                >
+                  {part.text}
+                </mark>
+              ) : (
+                <span key={i}>{part.text}</span>
+              ),
+            )
+          ) : jsonHTML ? (
+            <span dangerouslySetInnerHTML={{ __html: jsonHTML }} />
+          ) : (
+            displayBody || ""
+          )}
         </pre>
       </ScrollArea>
     </div>

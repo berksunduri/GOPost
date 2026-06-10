@@ -293,6 +293,19 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.ReplayHistoryEntry(id)
 		writeJSON(w, data, err)
 		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/user-config":
+		data, err := appInstance.GetUserConfig()
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodPut && r.URL.Path == "/api/user-config":
+		var cfg models.UserConfig
+		if err := decodeJSON(r, &cfg); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		data, err := appInstance.SaveUserConfig(&cfg)
+		writeJSON(w, data, err)
+		return
 	case r.Method == http.MethodPost && r.URL.Path == "/api/export":
 		var payload struct {
 			Path string `json:"path"`

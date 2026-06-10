@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useTheme } from "@/context/ThemeContext";
+import { useUserConfig } from "@/context/UserConfigContext";
 import {
   Dialog,
   DialogContent,
@@ -13,9 +14,15 @@ import {
   ScrollArea,
   Label,
 } from "@/components/ui";
-import { Palette, Keyboard } from "lucide-react";
+import { Palette, Keyboard, RotateCcw } from "lucide-react";
 import { t } from "@/i18n";
-import { SHORTCUTS, formatShortcut } from "@/lib/shortcuts";
+import {
+  DEFAULT_SHORTCUTS,
+  SHORTCUTS,
+  formatShortcut,
+  keysFromEvent,
+  shortcutsEqual,
+} from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 
 const SECTIONS = [
@@ -23,24 +30,148 @@ const SECTIONS = [
   { id: "keybindings", labelKey: "settingsKeybindings", icon: Keyboard },
 ];
 
-function KeybindingRow({ actionKey, keys }) {
+function KeybindingRow({ shortcut, currentKeys, onCapture, isCapturing }) {
+  const isCustom = !shortcutsEqual(currentKeys, DEFAULT_SHORTCUTS[shortcut.id]);
+
+  const handleClick = () => {
+    onCapture(shortcut.id);
+  };
+
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (!isCapturing) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Escape cancels
+      if (e.key === "Escape") {
+        onCapture(null);
+        return;
+      }
+
+      // Ignore pure modifier presses
+      if (["Meta", "Control", "Shift", "Alt"].includes(e.key)) return;
+
+      const keys = keysFromEvent(e);
+      if (keys.length === 0) return;
+      onCapture(null, keys);
+    },
+    [isCapturing, onCapture],
+  );
+
+  useEffect(() => {
+    if (isCapturing) {
+      window.addEventListener("keydown", handleKeyDown, true);
+      return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }
+  }, [isCapturing, handleKeyDown]);
+
   return (
     <div className="flex items-center justify-between gap-4 py-2 border-b border-border/50 last:border-0">
-      <span className="text-sm text-foreground/90">{t(actionKey)}</span>
-      <kbd className="px-2 py-1 rounded bg-muted text-xs font-mono shrink-0">
-        {formatShortcut(keys)}
-      </kbd>
+      <span className="text-sm text-foreground/90">
+        {t(shortcut.actionKey)}
+      </span>
+      <button
+        type="button"
+        onClick={handleClick}
+        className={cn(
+          "px-2 py-1 rounded text-xs font-mono shrink-0 min-w-[80px] text-center transition-colors",
+          isCapturing
+            ? "bg-primary/20 text-primary ring-1 ring-primary animate-pulse"
+            : isCustom
+              ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+              : "bg-muted hover:bg-accent",
+        )}
+        title={isCapturing ? t("capturingShortcut") : t("clickToRebind")}
+      >
+        {isCapturing ? "..." : formatShortcut(currentKeys)}
+      </button>
     </div>
   );
 }
 
-export function SettingsModal({ open, onClose, defaultSection = "appearance" }) {
+export function SettingsModal({
+  open,
+  onClose,
+  defaultSection = "appearance",
+}) {
   const { themeId, setThemeId, themeList } = useTheme();
+  const { shortcuts, updateShortcut, resetShortcut } = useUserConfig();
   const [section, setSection] = useState(defaultSection);
+  const [capturingId, setCapturingId] = useState(null);
+  const [conflict, setConflict] = useState(null);
+
+  // Resolve with defaults fallback
+  const getKeys = useCallback(
+    (id) => shortcuts[id] ?? DEFAULT_SHORTCUTS[id] ?? [],
+    [shortcuts],
+  );
 
   useEffect(() => {
     if (open) setSection(defaultSection);
   }, [open, defaultSection]);
+
+  // Clear capture state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setCapturingId(null);
+      setConflict(null);
+    }
+  }, [open]);
+
+  const handleCapture = useCallback(
+    (actionId, newKeys) => {
+      // Cancel: both args undefined/null
+      if (actionId === null && newKeys === undefined) {
+        setCapturingId(null);
+        setConflict(null);
+        return;
+      }
+
+      // Start capturing: actionId provided, no newKeys
+      if (newKeys === undefined) {
+        setCapturingId(actionId);
+        setConflict(null);
+        return;
+      }
+
+      // Finish: newKeys provided (actionId may be carried from closure)
+      const targetId = actionId ?? capturingId;
+
+      // Check for conflicts with other shortcuts
+      const conflictEntry = Object.entries(shortcuts).find(
+        ([id, keys]) => id !== targetId && shortcutsEqual(keys, newKeys),
+      );
+      if (conflictEntry) {
+        setConflict(conflictEntry[0]);
+        return;
+      }
+
+      // Check conflict with defaults
+      const defaultConflict = Object.entries(DEFAULT_SHORTCUTS).find(
+        ([id, keys]) =>
+          id !== targetId && !shortcuts[id] && shortcutsEqual(keys, newKeys),
+      );
+      if (defaultConflict) {
+        setConflict(defaultConflict[0]);
+        return;
+      }
+
+      updateShortcut(targetId, newKeys);
+      setCapturingId(null);
+      setConflict(null);
+    },
+    [shortcuts, updateShortcut, capturingId],
+  );
+
+  const handleReset = useCallback(
+    (actionId) => {
+      resetShortcut(actionId);
+      setCapturingId(null);
+      setConflict(null);
+    },
+    [resetShortcut],
+  );
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -114,17 +245,59 @@ export function SettingsModal({ open, onClose, defaultSection = "appearance" }) 
                     <h2 className="text-sm font-semibold mb-1">
                       {t("settingsKeybindings")}
                     </h2>
-                    <p className="text-xs text-muted-foreground mb-3">
+                    <p className="text-xs text-muted-foreground mb-1">
                       {t("settingsKeybindingsDesc")}
                     </p>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      {t("clickToRebind")}
+                    </p>
                   </div>
+
+                  {capturingId && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded bg-primary/10 border border-primary/30 text-xs text-primary animate-pulse">
+                      {conflict ? (
+                        <>
+                          <span>{t("shortcutConflict")}</span>
+                          <code className="font-mono bg-muted px-1 rounded">
+                            {t(
+                              `shortcut${conflict.charAt(0).toUpperCase() + conflict.slice(1)}`,
+                            )}
+                          </code>
+                        </>
+                      ) : (
+                        t("capturingShortcut")
+                      )}
+                    </div>
+                  )}
+
                   <div className="rounded-md border bg-card/50 px-3">
                     {SHORTCUTS.map((shortcut) => (
-                      <KeybindingRow
+                      <div
                         key={shortcut.id}
-                        actionKey={shortcut.actionKey}
-                        keys={shortcut.keys}
-                      />
+                        className="flex items-center gap-2"
+                      >
+                        <div className="flex-1">
+                          <KeybindingRow
+                            shortcut={shortcut}
+                            currentKeys={getKeys(shortcut.id)}
+                            onCapture={handleCapture}
+                            isCapturing={capturingId === shortcut.id}
+                          />
+                        </div>
+                        {!shortcutsEqual(
+                          getKeys(shortcut.id),
+                          DEFAULT_SHORTCUTS[shortcut.id],
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={() => handleReset(shortcut.id)}
+                            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground shrink-0"
+                            title={t("resetShortcut")}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>

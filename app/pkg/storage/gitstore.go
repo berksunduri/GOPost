@@ -468,6 +468,28 @@ func (g *GitStore) loadHistory() ([]models.HistoryEntry, error) {
 	return history, nil
 }
 
+// DeleteHistoryEntriesForCollection removes all history entries that reference
+// the given collection ID. Called when a collection is deleted to prevent
+// orphaned history entries.
+func (g *GitStore) DeleteHistoryEntriesForCollection(collectionID string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	history, err := g.loadHistory()
+	if err != nil {
+		return err
+	}
+
+	filtered := make([]models.HistoryEntry, 0, len(history))
+	for _, entry := range history {
+		if entry.CollectionID != collectionID {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return g.writePrettyJSON(g.historyPath(), filtered)
+}
+
 // ==================== ReplaceAll (for import) ====================
 
 func (g *GitStore) ReplaceAllData(data *models.ExportData) error {
@@ -526,6 +548,45 @@ func (g *GitStore) loadOrCreateManifest(collectionID string) (*models.Collection
 func (g *GitStore) saveManifest(collectionID string, m *models.CollectionManifest) error {
 	os.MkdirAll(g.collectionDir(collectionID), 0755)
 	return g.writePrettyJSON(g.manifestPath(collectionID), m)
+}
+
+// ==================== User Config ====================
+
+func (g *GitStore) userConfigPath() string {
+	return filepath.Join(g.baseDir, "settings", "user-config.gopost.json")
+}
+
+// GetUserConfig loads user preferences. Returns defaults if no config exists.
+func (g *GitStore) GetUserConfig() (*models.UserConfig, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	data, err := os.ReadFile(g.userConfigPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &models.UserConfig{
+				ThemeID:   "github-dark",
+				Shortcuts: map[string][]string{},
+			}, nil
+		}
+		return nil, err
+	}
+
+	var cfg models.UserConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return &models.UserConfig{
+			ThemeID:   "github-dark",
+			Shortcuts: map[string][]string{},
+		}, nil
+	}
+	return &cfg, nil
+}
+
+// SaveUserConfig persists user preferences.
+func (g *GitStore) SaveUserConfig(cfg *models.UserConfig) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.writePrettyJSON(g.userConfigPath(), cfg)
 }
 
 // ==================== Utilities ====================

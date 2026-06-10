@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { useUserConfig } from "@/context/UserConfigContext";
 
 const THEMES = {
   "github-dark": {
@@ -180,25 +181,19 @@ function applyThemeCSS(css) {
   });
 }
 
-function getStoredTheme() {
-  try {
-    return localStorage.getItem("gopost-theme") || "github-dark";
-  } catch {
-    return "github-dark";
-  }
-}
-
 export function ThemeProvider({ children }) {
-  const [themeId, setThemeId] = useState(getStoredTheme);
+  // Delegate theme state to UserConfigContext (must be wrapped by UserConfigProvider)
+  const {
+    themeId: ucThemeId,
+    setThemeId: ucSetThemeId,
+    loaded,
+  } = useUserConfig();
 
-  const theme = THEMES[themeId] || THEMES["github-dark"];
+  const theme = THEMES[ucThemeId] || THEMES["github-dark"];
 
   useEffect(() => {
     applyThemeCSS(theme.css);
-    try {
-      localStorage.setItem("gopost-theme", themeId);
-    } catch {}
-  }, [themeId, theme.css]);
+  }, [ucThemeId, theme.css]);
 
   const themeList = useMemo(
     () => Object.entries(THEMES).map(([id, t]) => ({ id, name: t.name })),
@@ -207,12 +202,12 @@ export function ThemeProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      themeId,
-      setThemeId,
+      themeId: ucThemeId,
+      setThemeId: ucSetThemeId,
       theme,
       themeList,
     }),
-    [themeId, theme, themeList],
+    [ucThemeId, ucSetThemeId, theme, themeList],
   );
 
   return (

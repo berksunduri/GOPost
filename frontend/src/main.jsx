@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { AppProvider } from "@/context/AppProvider";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { UserConfigProvider } from "@/context/UserConfigContext";
 import { Toaster } from "sonner";
 import App from "@/App";
 import "@/App.css";
@@ -22,12 +23,14 @@ const toaster = (
 
 export function render() {
   return (
-    <ThemeProvider>
-      <AppProvider>
-        {toaster}
-        <App />
-      </AppProvider>
-    </ThemeProvider>
+    <UserConfigProvider>
+      <ThemeProvider>
+        <AppProvider>
+          {toaster}
+          <App />
+        </AppProvider>
+      </ThemeProvider>
+    </UserConfigProvider>
   );
 }
 

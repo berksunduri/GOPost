@@ -1,6 +1,16 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { Badge } from "@/components/ui";
-import { AlertCircle, CheckCircle2, Clock, Copy, Check } from "lucide-react";
+import { t } from "@/i18n";
+import { useTheme } from "@/context/ThemeContext";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Copy,
+  Check,
+  Braces,
+} from "lucide-react";
+import { isJSON, beautifyJSON, highlightJSON } from "@/lib/json";
 
 /**
  * GQLResponseViewer — displays GraphQL responses with data/errors split.
@@ -10,6 +20,9 @@ import { AlertCircle, CheckCircle2, Clock, Copy, Check } from "lucide-react";
  */
 export function GQLResponseViewer({ response }) {
   const [copied, setCopied] = useState(false);
+  const [beautified, setBeautified] = useState(true);
+  const { themeId } = useTheme();
+  const isLight = themeId === "light";
 
   const handleCopy = useCallback(async () => {
     const text = response?.body;
@@ -31,6 +44,7 @@ export function GQLResponseViewer({ response }) {
       setTimeout(() => setCopied(false), 2000);
     }
   }, [response?.body]);
+
   if (!response) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground py-12">
@@ -46,19 +60,38 @@ export function GQLResponseViewer({ response }) {
     errors && (Array.isArray(errors) ? errors.length > 0 : true);
   const hasData = data != null;
 
-  // Pretty-print JSON
-  const formatJSON = (obj) => {
-    try {
-      if (typeof obj === "string") {
-        // Try to parse and re-stringify for consistent formatting
-        const parsed = JSON.parse(obj);
-        return JSON.stringify(parsed, null, 2);
+  // JSON detection for raw body
+  const bodyIsJSON = useMemo(
+    () => isJSON(response?.body, response?.headers),
+    [response?.body, response?.headers],
+  );
+
+  // Stable reference to beautifyJSON for the raw body highlight memo
+  const beautifyJSONStable = useCallback((b) => beautifyJSON(b), []);
+
+  // Syntax-highlighted HTML for raw body
+  const rawHighlighted = useMemo(() => {
+    if (!bodyIsJSON || !body) return null;
+    const formatted = beautified ? beautifyJSONStable(body) : body;
+    return highlightJSON(formatted, isLight);
+  }, [bodyIsJSON, body, beautified, beautifyJSONStable, isLight]);
+
+  // Pretty-print JSON when beautified, otherwise return raw
+  const formatJSON = useCallback(
+    (obj) => {
+      if (!beautified) return String(obj ?? "");
+      try {
+        if (typeof obj === "string") {
+          const parsed = JSON.parse(obj);
+          return JSON.stringify(parsed, null, 2);
+        }
+        return JSON.stringify(obj, null, 2);
+      } catch {
+        return String(obj);
       }
-      return JSON.stringify(obj, null, 2);
-    } catch {
-      return String(obj);
-    }
-  };
+    },
+    [beautified],
+  );
 
   return (
     <div className="flex flex-col h-full space-y-3 min-h-0">
@@ -95,6 +128,21 @@ export function GQLResponseViewer({ response }) {
             {time}ms
           </span>
         )}
+
+        {bodyIsJSON && (
+          <button
+            onClick={() => setBeautified((prev) => !prev)}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+              beautified
+                ? "text-blue-400 bg-blue-500/10 hover:bg-blue-500/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            }`}
+            title={beautified ? t("unbeautify") : t("beautifyJSON")}
+          >
+            <Braces className="h-3.5 w-3.5" />
+          </button>
+        )}
+
         <button
           onClick={handleCopy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
@@ -171,7 +219,11 @@ export function GQLResponseViewer({ response }) {
             Raw Response
           </summary>
           <pre className="text-[10px] font-mono bg-muted/30 rounded-md p-3 overflow-auto max-h-[30vh] whitespace-pre-wrap break-all border border-border">
-            {formatJSON(body)}
+            {rawHighlighted ? (
+              <span dangerouslySetInnerHTML={{ __html: rawHighlighted }} />
+            ) : (
+              formatJSON(body)
+            )}
           </pre>
         </details>
       </div>

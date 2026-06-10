@@ -26,6 +26,8 @@ import { t } from "@/i18n";
 import { api } from "@/api";
 import { Terminal, Plus, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
+import { useUserConfig } from "@/context/UserConfigContext";
+import { matchShortcut, formatShortcut } from "@/lib/shortcuts";
 import "./App.css";
 
 // Embedded terminal disabled — flip to true in config/features.js to re-enable.
@@ -73,6 +75,7 @@ function App() {
   const dragCounter = useRef(0);
 
   const hasRestoredTabs = useRef(false);
+  const { shortcuts } = useUserConfig();
 
   const handleSidebarResize = useCallback(
     (e) => {
@@ -121,109 +124,43 @@ function App() {
     [terminalPct],
   );
 
+  // Config-driven global shortcuts
   React.useEffect(() => {
     const onKey = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
-      if (mod && e.key.toLowerCase() === "i") {
-        e.preventDefault();
-        importInputRef.current?.click();
-      }
-      if (TERMINAL_ENABLED && mod && e.key === "`") {
+      const el = document.activeElement;
+      const isInput = el?.tagName === "INPUT" || el?.tagName === "TEXTAREA";
+
+      // Terminal toggle (hardware feature, not configurable)
+      if (TERMINAL_ENABLED && e.ctrlKey && e.key === "`") {
         e.preventDefault();
         setShowTerminal((s) => !s);
-      }
-      if (mod && e.key === ",") {
-        e.preventDefault();
-        openSettings("appearance");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openSettings]);
-
-  React.useEffect(() => {
-    if (lastRunReport) {
-      const { total, passed, failed } = lastRunReport;
-      if (failed === 0)
-        toast.success(
-          `Collection run complete \u2014 ${passed}/${total} passed`,
-        );
-      else
-        toast.error(
-          `Collection run complete \u2014 ${passed} passed, ${failed} failed`,
-        );
-    }
-  }, [lastRunReport]);
-
-
-  // Restore open tabs from previous session after data loads
-  React.useEffect(() => {
-    if (hasRestoredTabs.current) return;
-    if (loadingState.collections || loadingState.requests) return;
-    if (collections.length === 0) {
-      hasRestoredTabs.current = true;
-      return;
-    }
-
-    const saved = restoreTabIds();
-    if (!saved) {
-      hasRestoredTabs.current = true;
-      return;
-    }
-
-    // Load requests for all collections, then restore matching tabs
-    (async () => {
-      const allRequests = [];
-      for (const col of collections) {
-        try {
-          const reqs = await api.GetRequestsForCollection(col.id);
-          if (reqs) allRequests.push(...reqs);
-        } catch {
-          // Ignore individual load failures
-        }
+        return;
       }
 
-      // Open tabs for saved IDs that match loaded requests
-      const requestMap = new Map(allRequests.map((r) => [r.id, r]));
-      let activeRequest = null;
-      for (const id of saved.ids) {
-        const req = requestMap.get(id);
-        if (req) {
-          openTab(req);
-          if (id === saved.activeId) activeRequest = req;
-        }
-      }
-      // Restore active tab if possible
-      if (activeRequest) {
-        openTab(activeRequest);
-      }
-      hasRestoredTabs.current = true;
-    })();
-  }, [loadingState.collections, loadingState.requests, collections, openTab, restoreTabIds]);
-
-  // Global shortcuts: tab nav, new/close tab, help modal
-  React.useEffect(() => {
-    const onKey = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      const el = document.activeElement;
-
-      if (
-        e.key === "?" &&
-        !mod &&
-        el?.tagName !== "INPUT" &&
-        el?.tagName !== "TEXTAREA"
-      ) {
+      // Help shortcut — ignore in inputs so "?" doesn't steal focus
+      if (matchShortcut(e, shortcuts.shortcuts)) {
+        if (isInput) return;
         e.preventDefault();
         openSettings("keybindings");
         return;
       }
 
-      // New tab (Ctrl+N)
-      if (mod && e.key.toLowerCase() === "n") {
+      if (matchShortcut(e, shortcuts.search)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (matchShortcut(e, shortcuts.import)) {
+        e.preventDefault();
+        importInputRef.current?.click();
+        return;
+      }
+      if (matchShortcut(e, shortcuts.settings)) {
+        e.preventDefault();
+        openSettings("appearance");
+        return;
+      }
+      if (matchShortcut(e, shortcuts.newTab)) {
         e.preventDefault();
         let collId = selectedCollection?.id;
         if (!collId && collections.length > 0) {
@@ -243,40 +180,100 @@ function App() {
         });
         return;
       }
-
-      // Close tab (Ctrl+W)
-      if (mod && e.key.toLowerCase() === "w") {
+      if (matchShortcut(e, shortcuts.closeTab)) {
         e.preventDefault();
         if (activeTabId) closeTab(activeTabId);
         return;
       }
-
-      // Tab switching
-      if (mod && e.key === "Tab") {
+      if (matchShortcut(e, shortcuts.nextTab)) {
         e.preventDefault();
         if (openTabs.length === 0) return;
         const idx = openTabs.findIndex((t) => t.id === activeTabId);
-        if (e.shiftKey) {
-          const prev = idx <= 0 ? openTabs.length - 1 : idx - 1;
-          openTab(openTabs[prev].request);
-        } else {
-          const next = idx >= openTabs.length - 1 ? 0 : idx + 1;
-          openTab(openTabs[next].request);
-        }
+        const next = idx >= openTabs.length - 1 ? 0 : idx + 1;
+        openTab(openTabs[next].request);
+        return;
+      }
+      if (matchShortcut(e, shortcuts.prevTab)) {
+        e.preventDefault();
+        if (openTabs.length === 0) return;
+        const idx = openTabs.findIndex((t) => t.id === activeTabId);
+        const prev = idx <= 0 ? openTabs.length - 1 : idx - 1;
+        openTab(openTabs[prev].request);
         return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    shortcuts,
+    openSettings,
+    selectedCollection,
+    collections,
+    selectCollection,
     openTabs,
     activeTabId,
     openTab,
     closeTab,
-    selectedCollection,
+  ]);
+
+  // Collection run result toast
+  React.useEffect(() => {
+    if (lastRunReport) {
+      const { total, passed, failed } = lastRunReport;
+      if (failed === 0)
+        toast.success(
+          `Collection run complete \u2014 ${passed}/${total} passed`,
+        );
+      else
+        toast.error(
+          `Collection run complete \u2014 ${passed} passed, ${failed} failed`,
+        );
+    }
+  }, [lastRunReport]);
+
+  // Restore open tabs from previous session after data loads
+  React.useEffect(() => {
+    if (hasRestoredTabs.current) return;
+    if (loadingState.collections || loadingState.requests) return;
+    if (collections.length === 0) {
+      hasRestoredTabs.current = true;
+      return;
+    }
+    const saved = restoreTabIds();
+    if (!saved) {
+      hasRestoredTabs.current = true;
+      return;
+    }
+    (async () => {
+      const allRequests = [];
+      for (const col of collections) {
+        try {
+          const reqs = await api.GetRequestsForCollection(col.id);
+          if (reqs) allRequests.push(...reqs);
+        } catch {
+          // Ignore individual load failures
+        }
+      }
+      const requestMap = new Map(allRequests.map((r) => [r.id, r]));
+      let activeRequest = null;
+      for (const id of saved.ids) {
+        const req = requestMap.get(id);
+        if (req) {
+          openTab(req);
+          if (id === saved.activeId) activeRequest = req;
+        }
+      }
+      if (activeRequest) {
+        openTab(activeRequest);
+      }
+      hasRestoredTabs.current = true;
+    })();
+  }, [
+    loadingState.collections,
+    loadingState.requests,
     collections,
-    selectCollection,
-    openSettings,
+    openTab,
+    restoreTabIds,
   ]);
 
   const handleImport = async (e) => {
@@ -632,7 +629,7 @@ function App() {
                   <p className="text-[11px] text-muted-foreground/50">
                     {t("emptyStateNoRequestDesc")}{" "}
                     <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">
-                      Ctrl+N
+                      {formatShortcut(shortcuts.newTab)}
                     </kbd>{" "}
                     {t("emptyStateNoRequestCTA")}
                   </p>
@@ -652,7 +649,7 @@ function App() {
                     <p className="text-xs text-muted-foreground/60">
                       {t("emptyStateNoRequestDesc")}{" "}
                       <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">
-                        Ctrl+N
+                        {formatShortcut(shortcuts.newTab)}
                       </kbd>{" "}
                       {t("emptyStateNoRequestCTA")}
                     </p>

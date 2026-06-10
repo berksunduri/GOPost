@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle, XCircle, Play } from "lucide-react";
 import { Button } from "@/components/ui";
+import { useTheme } from "@/context/ThemeContext";
 
 // Starlark syntax keywords for highlighting
 const KEYWORDS = [
@@ -41,25 +42,31 @@ const BUILTINS = [
   "dict",
 ];
 
-function highlightStarlark(code) {
+function highlightStarlark(code, isLight = false) {
   if (!code) return "";
+  const str = isLight ? "text-amber-600" : "text-yellow-400";
+  const comment = isLight ? "text-emerald-600" : "text-green-500/70";
+  const num = isLight ? "text-violet-600" : "text-purple-400";
+  const kw = isLight ? "text-fuchsia-600" : "text-pink-400";
+  const builtin = isLight ? "text-cyan-600" : "text-cyan-400";
+
   return code
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(
       /("[^"\\]*(?:\\.[^"\\]*)*")|('[^'\\]*(?:\\.[^'\\]*)*')/g,
-      `<span class="text-yellow-400">$1$2</span>`,
+      `<span class="${str}">$1$2</span>`,
     )
-    .replace(/#.*/g, `<span class="text-green-500/70">$&</span>`)
-    .replace(/\b(\d+\.?\d*)\b/g, `<span class="text-purple-400">$1</span>`)
+    .replace(/#.*/g, `<span class="${comment}">$&</span>`)
+    .replace(/\b(\d+\.?\d*)\b/g, `<span class="${num}">$1</span>`)
     .replace(
       new RegExp(`\\b(${KEYWORDS.join("|")})\\b`, "g"),
-      `<span class="text-pink-400">$1</span>`,
+      `<span class="${kw}">$1</span>`,
     )
     .replace(
       new RegExp(`\\b(${BUILTINS.join("|")})\\b`, "g"),
-      `<span class="text-cyan-400">$1</span>`,
+      `<span class="${builtin}">$1</span>`,
     );
 }
 
@@ -105,14 +112,16 @@ export const ScriptEditor = React.memo(function ScriptEditor({
   const [scrollLeft, setScrollLeft] = useState(0);
   const textareaRef = useRef(null);
   const gutterRef = useRef(null);
+  const { themeId } = useTheme();
+  const isLight = themeId === "light";
 
   useEffect(() => {
     setCode(script);
   }, [script]);
 
   useEffect(() => {
-    setHighlighted(highlightStarlark(code));
-  }, [code]);
+    setHighlighted(highlightStarlark(code, isLight));
+  }, [code, isLight]);
 
   const handleChange = useCallback(
     (e) => {
@@ -192,12 +201,12 @@ export const ScriptEditor = React.memo(function ScriptEditor({
       </div>
 
       {/* Editor area */}
-      <div className="flex-1 min-h-0 rounded-md border border-border bg-[#0d1117] overflow-hidden">
+      <div className="flex-1 min-h-0 rounded-md border border-border bg-muted overflow-hidden">
         <div className="flex h-full">
           {/* Line number gutter */}
           <pre
             ref={gutterRef}
-            className="shrink-0 w-12 pt-3 pb-3 pl-2 pr-1 font-mono text-xs leading-relaxed text-muted-foreground/30 select-none text-right overflow-hidden bg-black/20 border-r border-border/50"
+            className="shrink-0 w-12 pt-3 pb-3 pl-2 pr-1 font-mono text-xs leading-relaxed text-muted-foreground/30 select-none text-right overflow-hidden bg-muted/60 border-r border-border/50"
             dangerouslySetInnerHTML={{ __html: gutterNums }}
           />
           {/* Code area with syntax highlight overlay */}
@@ -217,7 +226,7 @@ export const ScriptEditor = React.memo(function ScriptEditor({
               onKeyDown={handleKeyDown}
               readOnly={readOnly}
               spellCheck={false}
-              className="absolute inset-0 w-full h-full p-3 font-mono text-sm leading-relaxed bg-transparent text-transparent caret-white resize-none outline-none overflow-auto whitespace-pre-wrap break-all"
+              className="absolute inset-0 w-full h-full p-3 font-mono text-sm leading-relaxed bg-transparent text-transparent caret-foreground resize-none outline-none overflow-auto whitespace-pre-wrap break-all"
               placeholder={
                 "# Write your " + label.toLowerCase() + " script here..."
               }

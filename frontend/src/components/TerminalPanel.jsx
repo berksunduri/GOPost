@@ -3,6 +3,7 @@ import { Button } from "@/components/ui";
 import { Terminal as TerminalIcon, Trash2 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { TERMINAL_ENABLED } from "@/config/features";
+import { useTheme } from "@/context/ThemeContext";
 
 const TERM_FONT =
   '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SFMono Nerd Font", Menlo, Monaco, monospace';
@@ -15,7 +16,11 @@ let WebLinksMod = null;
 
 async function load() {
   if (XtermMod)
-    return { Terminal: XtermMod, FitAddon: FitAddonMod, WebLinksAddon: WebLinksMod };
+    return {
+      Terminal: XtermMod,
+      FitAddon: FitAddonMod,
+      WebLinksAddon: WebLinksMod,
+    };
   const [x, f, w] = await Promise.all([
     import("@xterm/xterm"),
     import("@xterm/addon-fit"),
@@ -24,7 +29,11 @@ async function load() {
   XtermMod = x.Terminal;
   FitAddonMod = f.FitAddon;
   WebLinksMod = w.WebLinksAddon;
-  return { Terminal: XtermMod, FitAddon: FitAddonMod, WebLinksAddon: WebLinksMod };
+  return {
+    Terminal: XtermMod,
+    FitAddon: FitAddonMod,
+    WebLinksAddon: WebLinksMod,
+  };
 }
 
 function sendResize(ws, cols, rows) {
@@ -55,6 +64,7 @@ export function TerminalPanel() {
   const ws = useRef(null);
   const fitRef = useRef(null);
   const [err, setErr] = useState(null);
+  const { themeId } = useTheme();
 
   useEffect(() => {
     if (!TERMINAL_ENABLED || !ref.current) return;
@@ -71,11 +81,18 @@ export function TerminalPanel() {
           cursorBlink: true,
           fontSize: 13,
           fontFamily: TERM_FONT,
-          theme: {
-            background: "#0d1117",
-            foreground: "#c9d1d9",
-            cursor: "#58a6ff",
-          },
+          theme:
+            themeId === "light"
+              ? {
+                  background: "#ffffff",
+                  foreground: "#1a1a2e",
+                  cursor: "#0969da",
+                }
+              : {
+                  background: "#0d1117",
+                  foreground: "#c9d1d9",
+                  cursor: "#58a6ff",
+                },
           rows: 24,
           cols: 80,
           scrollback: 5000,
@@ -118,9 +135,7 @@ export function TerminalPanel() {
         s.onopen = () => {
           if (disposed) return;
           while (outq.length) s.send(outq.shift());
-          requestAnimationFrame(() =>
-            layoutTerminal(ref.current, t, fit, s),
-          );
+          requestAnimationFrame(() => layoutTerminal(ref.current, t, fit, s));
         };
         s.onclose = () => {
           t.write("\r\n\x1b[31mDisconnected\x1b[0m\r\n");
@@ -133,9 +148,7 @@ export function TerminalPanel() {
         resizeObs.observe(ref.current);
 
         term.current = t;
-        requestAnimationFrame(() =>
-          layoutTerminal(ref.current, t, fit, s),
-        );
+        requestAnimationFrame(() => layoutTerminal(ref.current, t, fit, s));
       } catch (e) {
         if (!disposed) setErr(e.message);
       }
@@ -150,12 +163,12 @@ export function TerminalPanel() {
       term.current?.dispose();
       term.current = null;
     };
-  }, []);
+  }, [themeId]);
 
   if (!TERMINAL_ENABLED) return null;
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] border-t">
+    <div className="flex flex-col h-full bg-muted border-t">
       <div className="flex items-center justify-between px-3 py-1.5 border-b shrink-0">
         <div className="flex items-center gap-2">
           <TerminalIcon className="h-3.5 w-3.5 text-muted-foreground" />

@@ -142,8 +142,12 @@ func (a *App) UpdateCollection(id string, name string) (*models.Collection, erro
 	return collection, nil
 }
 
-// DeleteCollection deletes a collection
+// DeleteCollection deletes a collection and all associated history entries
 func (a *App) DeleteCollection(id string) (map[string]bool, error) {
+	// Clean up history entries that reference this collection
+	if err := a.git.DeleteHistoryEntriesForCollection(id); err != nil {
+		fmt.Printf("[gopost] Warning: failed to clean history entries for collection %s: %v\n", id, err)
+	}
 	err := a.git.DeleteCollection(id)
 	return map[string]bool{"ok": true}, err
 }
@@ -461,6 +465,17 @@ func (a *App) DeleteEnvironment(id string) (map[string]bool, error) {
 
 func (a *App) GetHistory() ([]models.HistoryEntry, error) {
 	return a.git.GetHistory()
+}
+
+// GetUserConfig returns the current user preferences (theme, shortcuts, etc.)
+func (a *App) GetUserConfig() (*models.UserConfig, error) {
+	return a.git.GetUserConfig()
+}
+
+// SaveUserConfig persists user preferences
+func (a *App) SaveUserConfig(cfg *models.UserConfig) (map[string]bool, error) {
+	err := a.git.SaveUserConfig(cfg)
+	return map[string]bool{"ok": true}, err
 }
 
 func (a *App) ReplayHistoryEntry(entryID string) (map[string]interface{}, error) {

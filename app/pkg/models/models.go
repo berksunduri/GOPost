@@ -160,6 +160,12 @@ type CachedGraphQLSchema struct {
 	IntrospectedAt time.Time              `json:"introspected_at"`
 }
 
+// UserConfig stores user preferences persisted in settings/user-config.gopost.json
+type UserConfig struct {
+	ThemeID   string              `json:"theme_id"`
+	Shortcuts map[string][]string `json:"shortcuts"` // actionId → key combo (e.g. "send" → ["mod","Enter"])
+}
+
 func RequestFileFromHTTPRequest(req *HTTPRequest) *RequestFile {
 	rf := &RequestFile{
 		ID:               req.ID,
