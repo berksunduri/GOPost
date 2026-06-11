@@ -207,10 +207,14 @@ func (a *App) MoveRequest(id string, collectionID string) (*models.HTTPRequest, 
 	if err != nil {
 		return nil, err
 	}
+	oldCollectionID := request.CollectionID
 	request.CollectionID = collectionID
 	request.UpdatedAt = time.Now()
 	if err := a.git.SaveRequest(request); err != nil {
 		return nil, err
+	}
+	if oldCollectionID != collectionID {
+		a.git.DeleteRequestFromCollection(id, oldCollectionID)
 	}
 	return request, nil
 }
@@ -476,6 +480,16 @@ func (a *App) GetUserConfig() (*models.UserConfig, error) {
 func (a *App) SaveUserConfig(cfg *models.UserConfig) (map[string]bool, error) {
 	err := a.git.SaveUserConfig(cfg)
 	return map[string]bool{"ok": true}, err
+}
+
+// GetRunHistory returns saved collection run reports
+func (a *App) GetRunHistory(collectionID string) ([]map[string]interface{}, error) {
+	return a.git.GetRunHistory(collectionID)
+}
+
+// GetRequest returns a single request by ID
+func (a *App) GetRequest(id string) (*models.HTTPRequest, error) {
+	return a.git.GetRequest(id)
 }
 
 func (a *App) ReplayHistoryEntry(entryID string) (map[string]interface{}, error) {
@@ -781,13 +795,20 @@ func (a *App) RunCollection(collectionID string, stopOnFail bool) (map[string]in
 			break
 		}
 	}
-	return map[string]interface{}{
+
+	summary := map[string]interface{}{
 		"collection_id": collectionID,
 		"total":         len(results),
 		"passed":        passed,
 		"failed":        failed,
 		"results":       results,
-	}, nil
+		"timestamp":     time.Now().Format(time.RFC3339),
+	}
+
+	// Save run report to disk
+	a.git.SaveRunReport(collectionID, summary)
+
+	return summary, nil
 }
 
 // ==================== GraphQL ====================

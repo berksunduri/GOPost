@@ -33,7 +33,6 @@ type HTTPRequest struct {
 	PreRequestScript string            `json:"pre_request_script,omitempty"`
 	TestScript       string            `json:"test_script,omitempty"`
 	CollectionID     string            `json:"collection_id"`
-	FolderID         string            `json:"folder_id,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 }
@@ -102,10 +101,10 @@ type ExportData struct {
 type CollectionManifest struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	Schema      int       `json:"schema"` // For future migrations
+	Schema      int       `json:"schema"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	Order       []string  `json:"order"` // Request file names in display order
+	Order       []string  `json:"order"`
 }
 
 // RequestFile is a self-contained request stored as its own file.

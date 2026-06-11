@@ -44,6 +44,21 @@ export function TabsProvider({ children }) {
     );
   }, []);
 
+  // Push a response onto the tab's history (last 5 kept)
+  const pushResponse = useCallback((tabId, response) => {
+    if (!response) return;
+    setOpenTabs((prev) =>
+      prev.map((t) => {
+        if (t.id !== tabId) return t;
+        const history = [
+          { ...response, _ts: Date.now() },
+          ...(t.responseHistory || []),
+        ].slice(0, 5);
+        return { ...t, responseHistory: history };
+      }),
+    );
+  }, []);
+
   const markDirty = useCallback((tabId) => {
     setOpenTabs((prev) =>
       prev.map((t) => (t.id === tabId ? { ...t, isDirty: true } : t)),
@@ -111,6 +126,7 @@ export function TabsProvider({ children }) {
       closeTab,
       closeTabByRequestId,
       updateTabData,
+      pushResponse,
       markDirty,
       markSaved,
       restoreTabIds,
@@ -122,6 +138,7 @@ export function TabsProvider({ children }) {
       closeTab,
       closeTabByRequestId,
       updateTabData,
+      pushResponse,
       markDirty,
       markSaved,
       restoreTabIds,

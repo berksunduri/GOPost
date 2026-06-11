@@ -72,6 +72,19 @@ export const api = {
     if (service) return service.GetRequestsForCollection(collectionId);
     return fetchJSON(`/api/collections/${collectionId}/requests`);
   },
+  async GetRequest(id) {
+    const service = getAppService();
+    if (service) return service.GetRequest(id);
+    return fetchJSON(`/api/requests/${id}`);
+  },
+  async MoveRequest(id, collectionId) {
+    const service = getAppService();
+    if (service) return service.MoveRequest(id, collectionId);
+    return fetchJSON(`/api/requests/${id}/move`, {
+      method: "PUT",
+      body: JSON.stringify({ collection_id: collectionId }),
+    });
+  },
   async SearchRequests(query) {
     const service = getAppService();
     if (service) return service.SearchRequests(query);
@@ -90,14 +103,6 @@ export const api = {
     const service = getAppService();
     if (service) return service.DeleteRequest(requestId);
     return fetchJSON(`/api/requests/${requestId}`, { method: "DELETE" });
-  },
-  async MoveRequest(requestId, collectionId) {
-    const service = getAppService();
-    if (service) return service.MoveRequest(requestId, collectionId);
-    return fetchJSON(`/api/requests/${requestId}/move`, {
-      method: "POST",
-      body: JSON.stringify({ collectionId }),
-    });
   },
   async ImportHTTPContent(collectionId, content) {
     const service = getAppService();
@@ -223,6 +228,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(cfg),
     });
+  },
+  async GetRunHistory(collectionID) {
+    const service = getAppService();
+    if (service) return service.GetRunHistory(collectionID);
+    return fetchJSON(`/api/runs/${collectionID}`);
   },
   async ReplayHistoryEntry(entryId) {
     const service = getAppService();

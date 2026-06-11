@@ -16,8 +16,48 @@ import {
   ChevronUp,
   ChevronDown,
   Braces,
+  GitCompare,
 } from "lucide-react";
 import { isJSON, beautifyJSON, highlightJSON } from "@/lib/json";
+import { ResponseDiffView } from "./ResponseDiffView";
+import { useTabs } from "@/context/TabsContext";
+
+/** Get Content-Type from response headers (case-insensitive) */
+function getContentType(response) {
+  if (!response?.headers) return null;
+  for (const key of Object.keys(response.headers)) {
+    if (key.toLowerCase() === "content-type") return response.headers[key];
+  }
+  return null;
+}
+
+/** Simple XML pretty-print with basic indentation */
+function formatXML(xml) {
+  if (!xml) return "";
+  let formatted = "";
+  let indent = 0;
+  const lines = xml
+    .replace(/>\s*</g, "><")
+    .replace(/(<[^/][^>]*>)/g, "\n$1")
+    .replace(/(<\/[^>]*>)/g, "$1\n")
+    .split("\n")
+    .filter((l) => l.trim());
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("</")) indent = Math.max(0, indent - 1);
+    formatted += "  ".repeat(indent) + trimmed + "\n";
+    if (
+      trimmed.startsWith("<") &&
+      !trimmed.startsWith("</") &&
+      !trimmed.endsWith("/>") &&
+      !trimmed.includes("</")
+    ) {
+      indent++;
+    }
+  }
+  return formatted;
+}
 
 export function ResponseViewer({ response }) {
   const [copied, setCopied] = useState(false);
@@ -29,6 +69,11 @@ export function ResponseViewer({ response }) {
   const bodyContainerRef = useRef(null);
   const { themeId } = useTheme();
   const isLight = themeId === "light";
+  const { openTabs, activeTabId } = useTabs();
+  const activeTab = openTabs.find((t) => t.id === activeTabId);
+  const responseHistory = activeTab?.responseHistory || [];
+  const [compareResponse, setCompareResponse] = useState(null);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   // Ctrl+F / Cmd+F to toggle search
   useEffect(() => {
@@ -70,6 +115,19 @@ export function ResponseViewer({ response }) {
     return raw;
   }, [response?.body, beautified, bodyIsJSON]);
 
+  // Large response handling: cap display at 100KB
+  const RESPONSE_CAP = 100 * 1024;
+  const bodySize = (response?.body || "").length;
+  const isLarge = bodySize > RESPONSE_CAP;
+  const [showFull, setShowFull] = useState(false);
+  const displayBodyCapped = useMemo(() => {
+    if (!isLarge || showFull) return displayBody;
+    return (
+      displayBody.slice(0, RESPONSE_CAP) +
+      "\n\n… (truncated — click 'Show all' to view full response)"
+    );
+  }, [displayBody, isLarge, showFull]);
+
   const handleCopy = useCallback(async () => {
     const text = displayBody;
     if (!text) return;
@@ -95,8 +153,8 @@ export function ResponseViewer({ response }) {
   const jsonHTML = useMemo(() => {
     if (searchOpen && searchQuery.trim()) return null;
     if (!bodyIsJSON) return null;
-    return highlightJSON(displayBody, isLight);
-  }, [bodyIsJSON, displayBody, searchOpen, searchQuery, isLight]);
+    return highlightJSON(displayBodyCapped, isLight);
+  }, [bodyIsJSON, displayBodyCapped, searchOpen, searchQuery, isLight]);
 
   // Build highlighted body with matches (search takes priority)
   const { highlightedBody, matchCount } = useMemo(() => {
@@ -173,6 +231,106 @@ export function ResponseViewer({ response }) {
     setCurrentMatchIdx(0);
   };
 
+  // Smart double-click: select just the content inside JSON quotes,
+  // even across multiple lines (like browser DevTools Elements panel)
+  const handleDoubleClick = useCallback(
+    (e) => {
+      if (!bodyIsJSON || !bodyContainerRef.current) return;
+
+      const pre = bodyContainerRef.current;
+      const sel = window.getSelection();
+      if (sel.rangeCount === 0) return;
+      const clickRange = sel.getRangeAt(0);
+
+      // Compute flat-text offset of click point
+      let offset = 0;
+      const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node === clickRange.startContainer) {
+          offset += clickRange.startOffset;
+          break;
+        }
+        offset += node.textContent.length;
+      }
+
+      const text = pre.textContent || "";
+      if (offset >= text.length) return;
+
+      // Count unescaped quotes before the click. If odd, we're inside a
+      // JSON string — do smart selection. If even, let the browser handle
+      // it naturally (numbers, booleans, null, etc).
+      let quoteCount = 0;
+      for (let i = 0; i < offset; i++) {
+        if (text[i] === '"' && (i === 0 || text[i - 1] !== "\\")) {
+          quoteCount++;
+        }
+      }
+      if (quoteCount % 2 === 0) return; // Not inside a quoted string
+
+      // Scan backwards to find the nearest opening `"` before the click
+      let openQuote = -1;
+      for (let i = offset; i >= 0; i--) {
+        if (text[i] === '"' && (i === 0 || text[i - 1] !== "\\")) {
+          openQuote = i;
+          break;
+        }
+      }
+
+      // Scan forwards to find the nearest closing `"` after the click
+      let closeQuote = -1;
+      for (let i = offset; i < text.length; i++) {
+        if (text[i] === '"' && (i === 0 || text[i - 1] !== "\\")) {
+          closeQuote = i;
+          break;
+        }
+      }
+
+      // Check we have a valid quoted span containing the click
+      if (
+        openQuote >= 0 &&
+        closeQuote > openQuote &&
+        offset > openQuote &&
+        offset < closeQuote
+      ) {
+        // Select everything between the quotes (exclude the `"` chars)
+        const innerStart = openQuote + 1;
+        const innerEnd = closeQuote;
+
+        // Convert flat offsets to text-node positions
+        let startNode = null,
+          startOff = 0,
+          endNode = null,
+          endOff = 0,
+          acc = 0;
+        const walker2 = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+        while ((node = walker2.nextNode())) {
+          const len = node.textContent.length;
+          if (!startNode && acc + len >= innerStart) {
+            startNode = node;
+            startOff = innerStart - acc;
+          }
+          if (!endNode && acc + len >= innerEnd) {
+            endNode = node;
+            endOff = innerEnd - acc;
+            break;
+          }
+          acc += len;
+        }
+
+        if (startNode && endNode) {
+          sel.removeAllRanges();
+          const newRange = document.createRange();
+          newRange.setStart(startNode, startOff);
+          newRange.setEnd(endNode, endOff);
+          sel.addRange(newRange);
+          e.preventDefault();
+        }
+      }
+    },
+    [bodyIsJSON],
+  );
+
   const goToPrevMatch = () => {
     setCurrentMatchIdx((prev) => (prev <= 0 ? matchCount - 1 : prev - 1));
   };
@@ -193,6 +351,12 @@ export function ResponseViewer({ response }) {
   const isSuccess = statusCode >= 200 && statusCode < 300;
   const isRedirect = statusCode >= 300 && statusCode < 400;
   const isError = statusCode >= 400;
+  const contentType = getContentType(response);
+  const isImage = contentType?.startsWith("image/");
+  const isHTML = contentType?.includes("text/html");
+  const isXML =
+    contentType?.includes("xml") ||
+    (bodyIsJSON === false && (response?.body || "").trim().startsWith("<"));
 
   return (
     <div className="flex flex-col h-full">
@@ -227,6 +391,57 @@ export function ResponseViewer({ response }) {
             >
               <Braces className="h-3.5 w-3.5" />
             </button>
+          )}
+          {responseHistory.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setCompareOpen((p) => !p)}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                  compareResponse
+                    ? "text-purple-400 bg-purple-500/10 hover:bg-purple-500/20"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                }`}
+                title="Compare with previous response"
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+              </button>
+              {compareOpen && (
+                <div className="absolute right-0 top-full mt-1.5 w-48 rounded-md border border-border bg-popover shadow-lg z-50 py-1">
+                  <div className="px-2 py-1 text-[10px] text-muted-foreground uppercase tracking-wider">
+                    Compare with
+                  </div>
+                  <div className="h-px bg-border mx-1 my-0.5" />
+                  {responseHistory.map((hist, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setCompareResponse(hist);
+                        setCompareOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                    >
+                      <span className="text-muted-foreground">
+                        {new Date(hist._ts).toLocaleTimeString()}
+                      </span>
+                      <span className="ml-2 text-muted-foreground/60">
+                        ({hist.code || hist.status})
+                      </span>
+                    </button>
+                  ))}
+                  {compareResponse && (
+                    <>
+                      <div className="h-px bg-border mx-1 my-0.5" />
+                      <button
+                        onClick={() => setCompareResponse(null)}
+                        className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+                      >
+                        Stop comparing
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           <button
             onClick={() => setSearchOpen((prev) => !prev)}
@@ -313,33 +528,77 @@ export function ResponseViewer({ response }) {
 
       {/* Response body */}
       <ScrollArea className="flex-1">
-        <pre
-          ref={bodyContainerRef}
-          className="p-4 text-xs font-mono whitespace-pre-wrap break-words"
-        >
-          {Array.isArray(highlightedBody) ? (
-            highlightedBody.map((part, i) =>
-              part.isMatch ? (
-                <mark
-                  key={i}
-                  className={
-                    part.matchIdx === currentMatchIdx
-                      ? "search-current bg-orange-400/50 text-inherit rounded-sm"
-                      : "bg-yellow-400/25 text-inherit rounded-sm"
-                  }
-                >
-                  {part.text}
-                </mark>
-              ) : (
-                <span key={i}>{part.text}</span>
-              ),
-            )
-          ) : jsonHTML ? (
-            <span dangerouslySetInnerHTML={{ __html: jsonHTML }} />
-          ) : (
-            displayBody || ""
-          )}
-        </pre>
+        {compareResponse ? (
+          <ResponseDiffView
+            current={response}
+            compare={compareResponse}
+            onClose={() => setCompareResponse(null)}
+          />
+        ) : isImage ? (
+          <div className="p-4 flex items-center justify-center">
+            <img
+              src={`data:${contentType};base64,${btoa(unescape(encodeURIComponent(response.body)))}`}
+              alt="Response"
+              className="max-w-full max-h-[60vh] object-contain rounded border"
+            />
+          </div>
+        ) : isHTML ? (
+          <iframe
+            srcDoc={response.body}
+            className="w-full h-full border-0"
+            sandbox="allow-same-origin"
+            title="HTML Preview"
+          />
+        ) : isXML ? (
+          <pre className="p-4 text-xs font-mono whitespace-pre-wrap break-words text-emerald-400">
+            {formatXML(response.body)}
+          </pre>
+        ) : (
+          <pre
+            ref={bodyContainerRef}
+            className="p-4 text-xs font-mono whitespace-pre-wrap break-words"
+            onDoubleClick={handleDoubleClick}
+          >
+            {Array.isArray(highlightedBody) ? (
+              highlightedBody.map((part, i) =>
+                part.isMatch ? (
+                  <mark
+                    key={i}
+                    className={
+                      part.matchIdx === currentMatchIdx
+                        ? "search-current bg-orange-400/50 text-inherit rounded-sm"
+                        : "bg-yellow-400/25 text-inherit rounded-sm"
+                    }
+                  >
+                    {part.text}
+                  </mark>
+                ) : (
+                  <span key={i}>{part.text}</span>
+                ),
+              )
+            ) : jsonHTML ? (
+              <span dangerouslySetInnerHTML={{ __html: jsonHTML }} />
+            ) : (
+              <>
+                {isLarge && !showFull && (
+                  <div className="text-center py-2">
+                    <span className="text-[11px] text-muted-foreground/60">
+                      Response is {Math.round(bodySize / 1024)}KB — showing
+                      first 100KB.{" "}
+                    </span>
+                    <button
+                      onClick={() => setShowFull(true)}
+                      className="text-[11px] text-primary hover:underline"
+                    >
+                      Show all
+                    </button>
+                  </div>
+                )}
+                {displayBodyCapped || ""}
+              </>
+            )}
+          </pre>
+        )}
       </ScrollArea>
     </div>
   );

@@ -323,27 +323,47 @@ func (g *GitStore) DeleteRequest(id string) error {
 		reqs, _ := g.getRequestsLocked(col.ID)
 		for i := range reqs {
 			if reqs[i].ID == id {
-				fileName := requestFileName(&reqs[i])
-				path := filepath.Join(g.requestsDir(col.ID), fileName)
-				if err := os.Remove(path); err != nil {
-					return err
-				}
-				manifest, _ := g.loadManifest(col.ID)
-				if manifest != nil {
-					filtered := make([]string, 0, len(manifest.Order))
-					for _, n := range manifest.Order {
-						if n != fileName {
-							filtered = append(filtered, n)
-						}
-					}
-					manifest.Order = filtered
-					g.saveManifest(col.ID, manifest)
-				}
-				return nil
+				return g.deleteRequestFileLocked(col.ID, &reqs[i])
 			}
 		}
 	}
 	return fmt.Errorf("request not found: %s", id)
+}
+
+// DeleteRequestFromCollection removes a request file from a specific collection.
+// Used by MoveRequest when the collection changes to clean up the old file.
+func (g *GitStore) DeleteRequestFromCollection(requestID, collectionID string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	reqs, _ := g.getRequestsLocked(collectionID)
+	for i := range reqs {
+		if reqs[i].ID == requestID {
+			return g.deleteRequestFileLocked(collectionID, &reqs[i])
+		}
+	}
+	return nil // Not found in this collection — already moved
+}
+
+func (g *GitStore) deleteRequestFileLocked(collectionID string, req *models.HTTPRequest) error {
+	fileName := requestFileName(req)
+	path := filepath.Join(g.requestsDir(collectionID), fileName)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	manifest, _ := g.loadManifest(collectionID)
+	if manifest != nil {
+		filtered := make([]string, 0, len(manifest.Order))
+		for _, n := range manifest.Order {
+			if n != fileName {
+				filtered = append(filtered, n)
+			}
+		}
+		manifest.Order = filtered
+		manifest.UpdatedAt = time.Now()
+		g.saveManifest(collectionID, manifest)
+	}
+	return nil
 }
 
 func (g *GitStore) GetAllRequests() ([]models.HTTPRequest, error) {
@@ -587,6 +607,62 @@ func (g *GitStore) SaveUserConfig(cfg *models.UserConfig) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.writePrettyJSON(g.userConfigPath(), cfg)
+}
+
+// ==================== Collection Runs ====================
+
+func (g *GitStore) runsDir() string {
+	return filepath.Join(g.baseDir, "runs")
+}
+
+// SaveRunReport saves a collection run result to runs/{collectionID}/{timestamp}.json
+func (g *GitStore) SaveRunReport(collectionID string, report map[string]interface{}) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	dir := filepath.Join(g.runsDir(), sanitizeName(collectionID))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	ts := time.Now().Format("2006-01-02T15-04-05")
+	path := filepath.Join(dir, ts+".json")
+	return g.writePrettyJSON(path, report)
+}
+
+// GetRunHistory returns all saved run reports for a collection, newest first.
+func (g *GitStore) GetRunHistory(collectionID string) ([]map[string]interface{}, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	dir := filepath.Join(g.runsDir(), sanitizeName(collectionID))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []map[string]interface{}{}, nil
+		}
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var report map[string]interface{}
+		if err := json.Unmarshal(data, &report); err != nil {
+			continue
+		}
+		report["_file"] = entry.Name()
+		results = append(results, report)
+	}
+
+	return results, nil
 }
 
 // ==================== Utilities ====================

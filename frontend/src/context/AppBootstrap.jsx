@@ -9,9 +9,11 @@ export function AppBootstrap({ children }) {
   const { loadHistory } = useHistory();
 
   useEffect(() => {
-    loadCollections();
-    loadEnvironments();
-    loadHistory();
+    // Critical path — load before first interactive paint
+    Promise.all([loadCollections(), loadEnvironments()]).then(() => {
+      // Deferred — load after UI is visible
+      setTimeout(() => loadHistory(), 200);
+    });
   }, [loadCollections, loadEnvironments, loadHistory]);
 
   return children;

@@ -245,26 +245,28 @@ function App() {
       return;
     }
     (async () => {
-      const allRequests = [];
-      for (const col of collections) {
-        try {
-          const reqs = await api.GetRequestsForCollection(col.id);
-          if (reqs) allRequests.push(...reqs);
-        } catch {
-          // Ignore individual load failures
-        }
-      }
-      const requestMap = new Map(allRequests.map((r) => [r.id, r]));
-      let activeRequest = null;
+      // Load only the specific requests that were open, not all requests
       for (const id of saved.ids) {
-        const req = requestMap.get(id);
-        if (req) {
-          openTab(req);
-          if (id === saved.activeId) activeRequest = req;
+        try {
+          const req = await api.GetRequest(id);
+          if (req) {
+            openTab(req);
+            if (id === saved.activeId) {
+              // Re-open as active (last one wins)
+            }
+          }
+        } catch {
+          // Request may have been deleted — skip
         }
       }
-      if (activeRequest) {
-        openTab(activeRequest);
+      // Set the active tab if it was restored
+      if (saved.activeId) {
+        try {
+          const activeReq = await api.GetRequest(saved.activeId);
+          if (activeReq) openTab(activeReq);
+        } catch {
+          // Skip if deleted
+        }
       }
       hasRestoredTabs.current = true;
     })();

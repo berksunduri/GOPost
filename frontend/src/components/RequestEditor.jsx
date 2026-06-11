@@ -30,9 +30,11 @@ import { ResponseViewer } from "./request/ResponseViewer";
 import { WebSocketEditor } from "./request/WebSocketEditor";
 import { SSEEditor } from "./request/SSEEditor";
 import { ScriptEditor } from "./request/ScriptEditor";
+import { ExtractEditor } from "./request/ExtractEditor";
 import { t } from "@/i18n";
 import { api } from "@/api";
 import { parseCurl } from "@/lib/parseCurl";
+import { resolveJSONPath } from "@/lib/jsonpath";
 import { toast } from "sonner";
 import { Send } from "lucide-react";
 import { Button, Input } from "@/components/ui";
@@ -47,6 +49,7 @@ function RequestEditor() {
     activeTabId,
     updateTabData,
     openTab,
+    pushResponse,
     markDirty,
     markSaved,
   } = useTabs();
@@ -85,19 +88,19 @@ function RequestEditor() {
   const [preRequestScript, setPreRequestScript] = useState("");
   const [testScript, setTestScript] = useState("");
 
+  // Response extraction rules
+  const [extracts, setExtracts] = useState([]);
+
   const isGraphQL = method === "GRAPHQL";
   const isWS = method === "WS";
   const isSSE = method === "SSE";
   const isConnectionMode = isWS || isSSE;
 
-  // Auto-save & send-sequence refs
-  const suppressAutoSaveRef = useRef(false);
-  const autoSaveTimer = useRef(null);
+  // Send-sequence ref
   const sendSeqRef = useRef(0);
 
   // Sync state when the active tab changes
   useEffect(() => {
-    suppressAutoSaveRef.current = true;
     if (!request) {
       // Reset for empty state
       setName("");
@@ -159,20 +162,10 @@ function RequestEditor() {
     else setActiveTabName("headers");
   }, [activeTabId]);
 
-  // Auto-save after 2s of inactivity (suppressed on tab switch)
+  // Mark tab as dirty when user edits (no auto-save)
   useEffect(() => {
     if (!request?.id || request.id.startsWith("new-")) return;
-    if (suppressAutoSaveRef.current) {
-      suppressAutoSaveRef.current = false;
-      return;
-    }
-    // Mark tab as dirty when user edits
     markDirty(request.id);
-    clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      handleSave(true);
-    }, 2000);
-    return () => clearTimeout(autoSaveTimer.current);
   }, [
     name,
     method,
@@ -425,10 +418,44 @@ function RequestEditor() {
         setActiveTabName("response");
       }
       updateTabData(activeTabId, { response: result });
+      pushResponse(activeTabId, result);
       const statusCode = result.code || result.status;
       const timeMs = result.time || "";
       toast.success(`${statusCode} ${timeMs ? `in ${timeMs}ms` : ""}`);
       await refreshRequests();
+
+      // Run response extractions
+      const active = extracts.filter((e) => e.name && e.path && e.env);
+      if (active.length > 0 && result?.body) {
+        try {
+          const parsed = JSON.parse(result.body);
+          for (const ext of active) {
+            const value = resolveJSONPath(parsed, ext.path);
+            if (value !== undefined) {
+              try {
+                const envs = await api.GetEnvironments();
+                const env = envs?.find((e) => e.id === ext.env);
+                if (env) {
+                  const vars = {
+                    ...(env.variables || {}),
+                    [ext.name]: value,
+                  };
+                  await api.UpdateEnvironment(ext.env, env.name, vars);
+                }
+              } catch {
+                // Environment might not exist — skip silently
+              }
+            }
+          }
+          if (active.length > 0) {
+            toast.success(
+              `Extracted ${active.length} variable${active.length > 1 ? "s" : ""}`,
+            );
+          }
+        } catch {
+          // Body wasn't JSON — skip extractions
+        }
+      }
     } catch (e) {
       if (seq !== sendSeqRef.current) return;
       toast.error(e.message || "Request failed");
@@ -443,6 +470,7 @@ function RequestEditor() {
     updateTabData,
     isGraphQL,
     isConnectionMode,
+    extracts,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -667,6 +695,9 @@ function RequestEditor() {
                 <TabsTrigger value="tests" className="text-xs">
                   Tests
                 </TabsTrigger>
+                <TabsTrigger value="extract" className="text-xs">
+                  Extract
+                </TabsTrigger>
                 <TabsTrigger value="response" className="text-xs">
                   {t("response")}
                 </TabsTrigger>
@@ -755,6 +786,7 @@ function RequestEditor() {
                     body={body}
                     onModeChange={setBodyMode}
                     onBodyChange={setBody}
+                    envVars={envVars}
                   />
                 </TabsContent>
                 <TabsContent value="pre-request" className="h-full">
@@ -771,6 +803,9 @@ function RequestEditor() {
                     label="Test Script"
                     testResult={response?.test_result}
                   />
+                </TabsContent>
+                <TabsContent value="extract" className="h-full">
+                  <ExtractEditor extracts={extracts} onChange={setExtracts} />
                 </TabsContent>
                 <TabsContent value="response" className="h-full">
                   <ResponseViewer response={response} />

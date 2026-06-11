@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { api } from "@/api";
 import { useAppStatus } from "@/context/AppStatusContext";
+import { toast } from "sonner";
 
 const EnvironmentsContext = createContext(null);
 
@@ -17,6 +18,53 @@ export function EnvironmentsProvider({ children }) {
 
   const selectedEnvironment = useMemo(
     () => environments.find((e) => e.id === selectedEnvironmentId) || null,
+    [environments, selectedEnvironmentId],
+  );
+
+  // Show diff toast when switching environments
+  const selectEnvironment = useCallback(
+    (id) => {
+      const prev = environments.find((e) => e.id === selectedEnvironmentId);
+      const next = environments.find((e) => e.id === id);
+
+      setSelectedEnvironmentId(id);
+
+      if (prev && next && prev.id !== next.id) {
+        const prevVars = prev.variables || {};
+        const nextVars = next.variables || {};
+        const allKeys = new Set([
+          ...Object.keys(prevVars),
+          ...Object.keys(nextVars),
+        ]);
+        const changes = [];
+        for (const k of allKeys) {
+          const pv = String(prevVars[k] ?? "(not set)");
+          const nv = String(nextVars[k] ?? "(not set)");
+          if (pv !== nv) {
+            changes.push({ key: k, prev: pv, next: nv });
+          }
+        }
+
+        if (changes.length > 0) {
+          const maxShow = 5;
+          const lines = changes
+            .slice(0, maxShow)
+            .map(
+              (c) =>
+                `  ${c.key}: ${c.prev.length > 30 ? c.prev.slice(0, 30) + "…" : c.prev} → ${c.next.length > 30 ? c.next.slice(0, 30) + "…" : c.next}`,
+            );
+          let msg = `Switched to ${next.name}\n${lines.join("\n")}`;
+          if (changes.length > maxShow)
+            msg += `\n  …and ${changes.length - maxShow} more`;
+          toast(msg, {
+            duration: 4000,
+            style: { whiteSpace: "pre-line", fontFamily: "monospace" },
+          });
+        } else {
+          toast(`Switched to ${next.name} (no changes)`);
+        }
+      }
+    },
     [environments, selectedEnvironmentId],
   );
 
@@ -70,7 +118,7 @@ export function EnvironmentsProvider({ children }) {
       environments,
       selectedEnvironment,
       selectedEnvironmentId,
-      setSelectedEnvironmentId,
+      setSelectedEnvironmentId: selectEnvironment,
       loadEnvironments,
       createEnvironment,
       deleteEnvironment,
@@ -80,6 +128,7 @@ export function EnvironmentsProvider({ children }) {
       environments,
       selectedEnvironment,
       selectedEnvironmentId,
+      selectEnvironment,
       loadEnvironments,
       createEnvironment,
       deleteEnvironment,

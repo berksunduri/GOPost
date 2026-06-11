@@ -31,6 +31,83 @@ import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { api } from "@/api";
+import { RunHistoryPanel } from "@/components/RunHistoryPanel";
+
+const RequestRow = React.memo(function RequestRow({
+  req,
+  col,
+  deleteRequest,
+  handleDuplicateRequest,
+  selectCollection,
+  openTab,
+  methodColor,
+  onDragStart: notifyDragStart,
+  onDragEnd: notifyDragEnd,
+}) {
+  const handleDragStart = (e) => {
+    // WKWebView (Wails/macOS) doesn't reliably support dataTransfer.getData.
+    // Store the payload in the parent ref via callback instead.
+    e.dataTransfer.effectAllowed = "move";
+    // setData is a no-op safety net; actual data is passed via notifyDragStart.
+    try {
+      e.dataTransfer.setData("text/plain", req.id);
+    } catch {}
+    notifyDragStart?.({ id: req.id, fromCol: col.id });
+    e.currentTarget.style.opacity = "0.4";
+  };
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = "1";
+    notifyDragEnd?.();
+  };
+
+  return (
+    <div
+      className="flex items-center justify-between group/req"
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <button
+        onClick={() => {
+          selectCollection(col);
+          openTab(req);
+        }}
+        className="flex items-center gap-1.5 flex-1 min-w-0"
+      >
+        <span
+          className={cn(
+            "text-[10px] font-mono font-bold shrink-0 w-10",
+            methodColor(req.method),
+          )}
+        >
+          {req.method}
+        </span>
+        <span className="truncate">{req.name}</span>
+      </button>
+      <button
+        className="hidden group-hover/req:flex shrink-0 hover:text-foreground p-0.5 rounded"
+        title="Duplicate request"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDuplicateRequest(req, col.id);
+        }}
+      >
+        <Copy className="h-3 w-3" />
+      </button>
+      <button
+        className="hidden group-hover/req:flex shrink-0 hover:text-destructive p-0.5 rounded"
+        title="Delete request"
+        onClick={(e) => {
+          e.stopPropagation();
+          deleteRequest(req.id, col.id);
+        }}
+      >
+        <Trash2 className="h-3 w-3" />
+      </button>
+    </div>
+  );
+});
 
 function Collections() {
   const {
@@ -56,6 +133,20 @@ function Collections() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [creatingRequestId, setCreatingRequestId] = useState(null);
+  const [showAllLimits, setShowAllLimits] = useState({});
+  const [dragOverId, setDragOverId] = useState(null); // "col:xxx" or "folder:xxx:yyy"
+  const dragPayloadRef = useRef(null); // { id, fromCol } — avoids dataTransfer.getData WKWebView bug
+
+  // Stable callbacks passed to every RequestRow so React.memo can skip re-renders.
+  // Inline arrows would create new references on every parent render (every dragOver),
+  // forcing all rows to re-render simultaneously and overflowing the stack.
+  const handleRowDragStart = useCallback((payload) => {
+    dragPayloadRef.current = payload;
+  }, []);
+  const handleRowDragEnd = useCallback(() => {
+    dragPayloadRef.current = null;
+  }, []);
+  const VISIBLE_LIMIT = 50;
   const fileInputRef = useRef(null);
   const dialogInputRef = useRef(null);
 
@@ -80,6 +171,37 @@ function Collections() {
     setShowDialog(true);
   };
 
+  const handleDragOver = (e, targetId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverId(targetId);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
+  const handleDropOnCollection = useCallback(
+    async (e, targetColId) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverId(null);
+      const data = dragPayloadRef.current;
+      dragPayloadRef.current = null;
+      if (!data?.id || data.fromCol === targetColId) return;
+      try {
+        await api.MoveRequest(data.id, targetColId);
+        loadRequests(data.fromCol);
+        loadRequests(targetColId);
+        toast.success("Moved to collection");
+      } catch {
+        // Ignore invalid drops
+      }
+    },
+    [loadRequests],
+  );
+
   const openRename = (col) => {
     setEditingId(col.id);
     setDialogName(col.name);
@@ -89,6 +211,7 @@ function Collections() {
   const handleSubmit = () => {
     const trimmed = dialogName.trim();
     if (!trimmed) return;
+
     if (editingId) {
       updateCollection(editingId, trimmed);
       toast.success(`Renamed to "${trimmed}"`);
@@ -276,7 +399,17 @@ function Collections() {
                 : [];
 
               return (
-                <div key={col.id}>
+                <div
+                  key={col.id}
+                  className={
+                    dragOverId === `col:${col.id}`
+                      ? "ring-2 ring-primary/50 rounded-md"
+                      : ""
+                  }
+                  onDragOver={(e) => handleDragOver(e, `col:${col.id}`)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDropOnCollection(e, col.id)}
+                >
                   {/* Collection row */}
                   <div className="group relative">
                     <button
@@ -389,51 +522,46 @@ function Collections() {
                           Empty collection
                         </div>
                       ) : (
-                        colRequests.map((req) => (
-                          <div
-                            key={req.id}
-                            className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs text-left text-muted-foreground hover:text-foreground hover:bg-accent transition-colors group/req"
-                          >
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                selectCollection(col);
-                                openTab(req);
-                              }}
-                              className="flex items-center gap-1.5 flex-1 min-w-0"
-                            >
-                              <span
-                                className={cn(
-                                  "text-[10px] font-mono font-bold shrink-0 w-10",
-                                  methodColor(req.method),
+                        (() => {
+                          const showAll = showAllLimits[col.id];
+                          const limit = showAll ? Infinity : VISIBLE_LIMIT;
+                          const visible = colRequests.slice(0, limit);
+
+                          return (
+                            <>
+                              {visible.map((req) => (
+                                <RequestRow
+                                  key={req.id}
+                                  req={req}
+                                  col={col}
+                                  deleteRequest={deleteRequest}
+                                  handleDuplicateRequest={
+                                    handleDuplicateRequest
+                                  }
+                                  selectCollection={selectCollection}
+                                  openTab={openTab}
+                                  methodColor={methodColor}
+                                  onDragStart={handleRowDragStart}
+                                  onDragEnd={handleRowDragEnd}
+                                />
+                              ))}
+                              {!showAll &&
+                                colRequests.length > VISIBLE_LIMIT && (
+                                  <button
+                                    onClick={() =>
+                                      setShowAllLimits((p) => ({
+                                        ...p,
+                                        [col.id]: true,
+                                      }))
+                                    }
+                                    className="w-full text-[10px] text-muted-foreground/50 hover:text-muted-foreground py-1 text-center hover:bg-accent/30 rounded transition-colors"
+                                  >
+                                    Show all {colRequests.length} requests
+                                  </button>
                                 )}
-                              >
-                                {req.method}
-                              </span>
-                              <span className="truncate">{req.name}</span>
-                            </button>
-                            <button
-                              className="hidden group-hover/req:flex shrink-0 hover:text-foreground p-0.5 rounded"
-                              title="Duplicate request"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDuplicateRequest(req, col.id);
-                              }}
-                            >
-                              <Copy className="h-3 w-3" />
-                            </button>
-                            <button
-                              className="hidden group-hover/req:flex shrink-0 hover:text-destructive p-0.5 rounded"
-                              title="Delete request"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteRequest(req.id, col.id);
-                              }}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ))
+                            </>
+                          );
+                        })()
                       )}
                     </div>
                   )}
@@ -444,7 +572,19 @@ function Collections() {
         )}
       </ScrollArea>
 
-      {/* Create/Rename dialog */}
+      {/* Run history for selected collection */}
+      {selectedCollection && (
+        <details className="border-t shrink-0">
+          <summary className="px-3 py-2 text-[10px] text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground">
+            Run History
+          </summary>
+          <div className="px-2 pb-2 max-h-[200px] overflow-y-auto">
+            <RunHistoryPanel collectionId={selectedCollection.id} />
+          </div>
+        </details>
+      )}
+
+      {/* Create/Rename/Folder dialog */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>

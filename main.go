@@ -162,6 +162,37 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/requests/"):
+		// Specific PUT sub-routes first
+		if strings.HasSuffix(r.URL.Path, "/move") {
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/move")
+			var payload struct {
+				CollectionID string `json:"collection_id"`
+			}
+			if err := decodeJSON(r, &payload); err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			data, err := appInstance.MoveRequest(id, payload.CollectionID)
+			writeJSON(w, data, err)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/graphql") {
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/graphql")
+			var payload struct {
+				Query         string `json:"query"`
+				Variables     string `json:"variables"`
+				OperationName string `json:"operationName"`
+				SchemaURL     string `json:"schemaURL"`
+			}
+			if err := decodeJSON(r, &payload); err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			data, err := appInstance.SetRequestGraphQL(id, payload.Query, payload.Variables, payload.OperationName, payload.SchemaURL)
+			writeJSON(w, data, err)
+			return
+		}
+		// Generic PUT — update request
 		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
 		var payload struct {
 			Name        string            `json:"name"`
@@ -211,18 +242,6 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.DuplicateRequest(id)
 		writeJSON(w, data, err)
 		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/move"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/move")
-		var payload struct {
-			CollectionID string `json:"collectionId"`
-		}
-		if err := decodeJSON(r, &payload); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		data, err := appInstance.MoveRequest(id, payload.CollectionID)
-		writeJSON(w, data, err)
-		return
 
 	// GraphQL request sub-routes (must come before generic request handlers)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute-graphql"):
@@ -230,24 +249,14 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		data, err := appInstance.ExecuteGraphQLRequest(id)
 		writeJSON(w, data, err)
 		return
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/graphql"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/graphql")
-		var payload struct {
-			Query         string `json:"query"`
-			Variables     string `json:"variables"`
-			OperationName string `json:"operationName"`
-			SchemaURL     string `json:"schemaURL"`
-		}
-		if err := decodeJSON(r, &payload); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		data, err := appInstance.SetRequestGraphQL(id, payload.Query, payload.Variables, payload.OperationName, payload.SchemaURL)
-		writeJSON(w, data, err)
-		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/requests/search":
 		data, err := appInstance.SearchRequests(r.URL.Query().Get("q"))
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/requests/") && !strings.Contains(r.URL.Path[13:], "/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
+		data, err := appInstance.GetRequest(id)
 		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodGet && r.URL.Path == "/api/environments":
@@ -304,6 +313,11 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data, err := appInstance.SaveUserConfig(&cfg)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/runs/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/runs/")
+		data, err := appInstance.GetRunHistory(id)
 		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/api/export":
