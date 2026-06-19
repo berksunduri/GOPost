@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+echo "▶ Running Go tests..."
+cd "$ROOT"
+# app/ and root require Wails CGO + macOS frameworks (run with -tags integration separately).
+# app/pkg/ covers all storage, parser, runner, scripting, and reporter logic.
+go test ./app/pkg/... 2>&1
+echo "✓ Go tests passed"
+
+echo "▶ Running frontend tests..."
+cd "$ROOT/frontend"
+npm test 2>&1
+echo "✓ Frontend tests passed"
