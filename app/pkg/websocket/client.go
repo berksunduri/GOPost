@@ -184,6 +184,10 @@ func (c *Client) StatusInfo() map[string]interface{} {
 
 // readLoop continuously reads messages from the WebSocket connection.
 func (c *Client) readLoop() {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+
 	defer func() {
 		c.mu.Lock()
 		if c.status == StatusConnected {
@@ -199,7 +203,7 @@ func (c *Client) readLoop() {
 		default:
 		}
 
-		msgType, data, err := c.conn.ReadMessage()
+		msgType, data, err := conn.ReadMessage()
 		if err != nil {
 			c.mu.Lock()
 			if c.status == StatusConnected {
