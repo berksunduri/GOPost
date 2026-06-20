@@ -1,12 +1,13 @@
 import React from "react";
 import { Button } from "@/components/ui";
-import { FolderTree, GitBranch, Clock, Settings } from "lucide-react";
+import { FolderTree, GitBranch, Clock, Settings, Server } from "lucide-react";
 import { t } from "@/i18n";
 
 const primaryIcons = [
   { id: "explorer", icon: FolderTree, labelKey: "activityExplorer" },
   { id: "git", icon: GitBranch, labelKey: "activityGit" },
   { id: "history", icon: Clock, labelKey: "activityHistory" },
+  { id: "mock", icon: Server, labelKey: "activityMock" },
 ];
 
 const settingsIcon = {
@@ -27,8 +28,7 @@ export const ActivityBar = React.memo(function ActivityBar({
       size="icon"
       className="h-9 w-9 rounded-none border-l-2"
       style={{
-        borderLeftColor:
-          active === id ? "hsl(var(--primary))" : "transparent",
+        borderLeftColor: active === id ? "hsl(var(--primary))" : "transparent",
       }}
       onClick={() => onSelect(id)}
       title={t(labelKey)}

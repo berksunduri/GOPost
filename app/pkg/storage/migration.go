@@ -14,7 +14,10 @@ import (
 // Old files are renamed to .legacy.bak after successful migration.
 func MigrateFromLegacy(baseDir string) (bool, error) {
 	legacy := New(baseDir)
-	git := NewGitStore(baseDir)
+	git, err := NewGitStore(baseDir)
+	if err != nil {
+		return false, fmt.Errorf("migration: failed to create GitStore: %w", err)
+	}
 
 	colPath := filepath.Join(baseDir, "collections.json")
 	if _, err := os.Stat(colPath); os.IsNotExist(err) {
@@ -68,7 +71,7 @@ func MigrateFromLegacy(baseDir string) (bool, error) {
 	log.Printf("[migration]   ✓ %d requests", len(legacyReqs))
 
 	envDir := filepath.Join(baseDir, "environments")
-	os.MkdirAll(envDir, 0755)
+	os.MkdirAll(envDir, 0700)
 	for _, env := range legacyEnvs {
 		env.UpdatedAt = env.CreatedAt
 		git.writePrettyJSON(filepath.Join(envDir, sanitizeName(env.ID)+".gopost.json"), env)
@@ -95,6 +98,9 @@ func MigrateFromLegacy(baseDir string) (bool, error) {
 
 // ExportToGitStore exports an ExportData snapshot directly to GitStore format.
 func ExportToGitStore(baseDir string, data *models.ExportData) error {
-	git := NewGitStore(baseDir)
+	git, err := NewGitStore(baseDir)
+	if err != nil {
+		return err
+	}
 	return git.ReplaceAllData(data)
 }

@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { api } from "@/api";
+import log from "@/lib/log";
 import { useAppStatus } from "@/context/AppStatusContext";
 
 const HistoryContext = createContext(null);
@@ -19,7 +20,7 @@ export function HistoryProvider({ children }) {
       const result = await runWithStatus("history", () => api.GetHistory());
       setHistory(result || []);
     } catch (e) {
-      console.error("Error loading history:", e);
+      log.error("Error loading history:", e);
     }
   }, [runWithStatus]);
 

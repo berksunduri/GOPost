@@ -5,9 +5,9 @@
 package runner
 
 import (
-	"net"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -78,10 +78,6 @@ var sharedTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 }
 
-var DefaultExecutor = &HTTPExecutor{
-	Client: &http.Client{Transport: sharedTransport.Clone(), Timeout: 30 * time.Second},
-}
-
 // Execute sends an HTTP request and returns the result.
 func (e *HTTPExecutor) Execute(req *models.HTTPRequest, env *models.Environment) (int, string, string, int64, error) {
 	urlStr := substituteVariables(req.URL, env)
@@ -106,10 +102,12 @@ func (e *HTTPExecutor) Execute(req *models.HTTPRequest, env *models.Environment)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
+	// Drain response body without allocating — callers that need the body
+	// can use a separate code path.
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 10*1024*1024))
 	duration := time.Since(start).Milliseconds()
 
-	return resp.StatusCode, resp.Status, string(respBody), duration, nil
+	return resp.StatusCode, resp.Status, "", duration, nil
 }
 
 // Run executes all requests in a collection or .http file.
@@ -165,7 +163,10 @@ func loadRequests(path string) ([]models.HTTPRequest, string, error) {
 
 	// Try as GitStore collection name
 	home, _ := os.UserHomeDir()
-	store := storage.NewGitStore(filepath.Join(home, ".gopost"))
+	store, err := storage.NewGitStore(filepath.Join(home, ".gopost"))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open storage: %w", err)
+	}
 	requests, err := store.GetRequests(path)
 	if err == nil && len(requests) > 0 {
 		col, _ := store.GetCollection(path)
@@ -266,7 +267,7 @@ func runParallel(requests []models.HTTPRequest, cfg Config, exec *HTTPExecutor) 
 }
 
 func executeOne(req models.HTTPRequest, cfg Config, exec *HTTPExecutor) RequestResult {
-	status, statusText, body, duration, err := exec.Execute(&req, cfg.Environment)
+	status, _, _, duration, err := exec.Execute(&req, cfg.Environment)
 
 	rr := RequestResult{
 		Name:     req.Name,
@@ -292,8 +293,6 @@ func executeOne(req models.HTTPRequest, cfg Config, exec *HTTPExecutor) RequestR
 		}
 	}
 
-	_ = statusText
-	_ = body
 	return rr
 }
 

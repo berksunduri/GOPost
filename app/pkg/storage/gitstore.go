@@ -37,7 +37,7 @@ type GitStore struct {
 }
 
 // NewGitStore creates a GitStore rooted at baseDir.
-func NewGitStore(baseDir string) *GitStore {
+func NewGitStore(baseDir string) (*GitStore, error) {
 	dirs := []string{
 		filepath.Join(baseDir, "collections"),
 		filepath.Join(baseDir, "environments"),
@@ -45,12 +45,26 @@ func NewGitStore(baseDir string) *GitStore {
 		filepath.Join(baseDir, "settings"),
 	}
 	for _, d := range dirs {
-		os.MkdirAll(d, 0755)
+		if err := os.MkdirAll(d, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create directory %s: %w", d, err)
+		}
 	}
-	return &GitStore{baseDir: baseDir}
+	return &GitStore{baseDir: baseDir}, nil
 }
 
 // ==================== Collections ====================
+
+// safeSubPath resolves a sub-path under the GitStore base directory and
+// verifies it does not escape via path traversal. Returns the resolved
+// absolute path and an error if the path escapes the base directory.
+func (g *GitStore) safeSubPath(elem ...string) (string, error) {
+	joined := filepath.Join(g.baseDir, filepath.Join(elem...))
+	rel, err := filepath.Rel(g.baseDir, joined)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path traversal detected: %s", filepath.Join(elem...))
+	}
+	return joined, nil
+}
 
 func (g *GitStore) collectionDir(id string) string {
 	return filepath.Join(g.baseDir, "collections", sanitizeName(id))
@@ -66,7 +80,7 @@ func (g *GitStore) SaveCollection(c *models.Collection) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if err := os.MkdirAll(g.requestsDir(c.ID), 0755); err != nil {
+	if err := os.MkdirAll(g.requestsDir(c.ID), 0700); err != nil {
 		return err
 	}
 
@@ -162,8 +176,20 @@ func requestFileName(req *models.HTTPRequest) string {
 }
 
 func sanitizeName(name string) string {
-	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "", "?", "", "\"", "", "<", "", ">", "", "|", "")
-	return r.Replace(name)
+	// Replace path separators and filesystem-significant characters.
+	r := strings.NewReplacer(
+		"/", "-", "\\", "-", ":", "-", "*", "", "?", "",
+		"\"", "", "<", "", ">", "", "|", "", "\x00", "",
+	)
+	cleaned := r.Replace(name)
+	// Replace leading dots to prevent hidden files and relative traversal.
+	cleaned = strings.TrimLeft(cleaned, ".")
+	// Replace ".." sequences (may appear after other replacements).
+	cleaned = strings.ReplaceAll(cleaned, "..", "--")
+	if cleaned == "" {
+		return "unnamed"
+	}
+	return cleaned
 }
 
 func (g *GitStore) SaveRequest(req *models.HTTPRequest) error {
@@ -175,7 +201,7 @@ func (g *GitStore) SaveRequest(req *models.HTTPRequest) error {
 // saveRequestLocked is the internal version — caller MUST hold g.mu.
 func (g *GitStore) saveRequestLocked(req *models.HTTPRequest) error {
 	reqDir := g.requestsDir(req.CollectionID)
-	if err := os.MkdirAll(reqDir, 0755); err != nil {
+	if err := os.MkdirAll(reqDir, 0700); err != nil {
 		return err
 	}
 
@@ -391,7 +417,9 @@ func (g *GitStore) SaveEnvironment(env *models.Environment) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	envDir := filepath.Join(g.baseDir, "environments")
-	os.MkdirAll(envDir, 0755)
+	if err := os.MkdirAll(envDir, 0700); err != nil {
+		return err
+	}
 	env.UpdatedAt = time.Now()
 	return g.writePrettyJSON(filepath.Join(envDir, sanitizeName(env.ID)+".gopost.json"), env)
 }
@@ -463,10 +491,34 @@ func (g *GitStore) SaveHistoryEntry(entry *models.HistoryEntry) error {
 func (g *GitStore) saveHistoryEntryLocked(entry *models.HistoryEntry) error {
 	history, _ := g.loadHistory()
 	history = append([]models.HistoryEntry{*entry}, history...)
-	if len(history) > 500 {
-		history = history[:500]
+
+	const maxHistory = 1000
+	if len(history) > maxHistory {
+		// Archive overflow entries before truncating.
+		overflow := history[maxHistory:]
+		history = history[:maxHistory]
+		g.archiveHistoryLocked(overflow)
 	}
 	return g.writePrettyJSON(g.historyPath(), history)
+}
+
+// archiveHistoryLocked writes overflow history entries to a timestamped archive
+// file so no data is silently lost when the history cap is reached.
+// Caller MUST hold g.mu.
+func (g *GitStore) archiveHistoryLocked(entries []models.HistoryEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	archivePath := filepath.Join(g.baseDir, "history",
+		"history-archive-"+time.Now().Format("2006-01")+".gopost.json")
+
+	// Append to existing archive if present.
+	var existing []models.HistoryEntry
+	if data, err := os.ReadFile(archivePath); err == nil {
+		json.Unmarshal(data, &existing)
+	}
+	existing = append(existing, entries...)
+	g.writePrettyJSON(archivePath, existing)
 }
 
 func (g *GitStore) GetHistory() ([]models.HistoryEntry, error) {
@@ -484,7 +536,9 @@ func (g *GitStore) loadHistory() ([]models.HistoryEntry, error) {
 		}
 		return nil, err
 	}
-	json.Unmarshal(data, &history)
+	if err := json.Unmarshal(data, &history); err != nil {
+		return nil, fmt.Errorf("history file corrupt: %w", err)
+	}
 	return history, nil
 }
 
@@ -518,7 +572,9 @@ func (g *GitStore) ReplaceAllData(data *models.ExportData) error {
 
 	colDir := filepath.Join(g.baseDir, "collections")
 	os.RemoveAll(colDir)
-	os.MkdirAll(colDir, 0755)
+	if err := os.MkdirAll(colDir, 0700); err != nil {
+		return err
+	}
 
 	for _, col := range data.Collections {
 		g.saveCollectionLocked(&col)
@@ -529,12 +585,16 @@ func (g *GitStore) ReplaceAllData(data *models.ExportData) error {
 
 	envDir := filepath.Join(g.baseDir, "environments")
 	os.RemoveAll(envDir)
-	os.MkdirAll(envDir, 0755)
+	if err := os.MkdirAll(envDir, 0700); err != nil {
+		return err
+	}
 	for _, env := range data.Environments {
 		g.SaveEnvironment(&env)
 	}
 
-	os.MkdirAll(filepath.Join(g.baseDir, "history"), 0755)
+	if err := os.MkdirAll(filepath.Join(g.baseDir, "history"), 0700); err != nil {
+		return err
+	}
 	return g.writePrettyJSON(g.historyPath(), data.History)
 }
 
@@ -566,7 +626,9 @@ func (g *GitStore) loadOrCreateManifest(collectionID string) (*models.Collection
 }
 
 func (g *GitStore) saveManifest(collectionID string, m *models.CollectionManifest) error {
-	os.MkdirAll(g.collectionDir(collectionID), 0755)
+	if err := os.MkdirAll(g.collectionDir(collectionID), 0700); err != nil {
+		return err
+	}
 	return g.writePrettyJSON(g.manifestPath(collectionID), m)
 }
 
@@ -621,7 +683,7 @@ func (g *GitStore) SaveRunReport(collectionID string, report map[string]interfac
 	defer g.mu.Unlock()
 
 	dir := filepath.Join(g.runsDir(), sanitizeName(collectionID))
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
@@ -667,13 +729,96 @@ func (g *GitStore) GetRunHistory(collectionID string) ([]map[string]interface{},
 
 // ==================== Utilities ====================
 
+// writeAtomic writes data to a temporary file and renames it into place,
+// preventing data corruption if the process crashes mid-write.
+func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func (g *GitStore) writePrettyJSON(path string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0644)
+	return writeAtomic(path, data, 0600)
+}
+
+// ==================== Mock Configs ====================
+
+func (g *GitStore) mocksDir(collectionID string) string {
+	return filepath.Join(g.collectionDir(collectionID), "mocks")
+}
+
+func (g *GitStore) mockPath(collectionID, requestID string) string {
+	return filepath.Join(g.mocksDir(collectionID), sanitizeName(requestID)+".mock.gopost.json")
+}
+
+// SaveMockConfig persists a mock configuration for a request.
+func (g *GitStore) SaveMockConfig(mc *models.MockConfig) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Find the collection for this request
+	cols, err := g.getCollectionsLocked()
+	if err != nil {
+		return err
+	}
+	for _, col := range cols {
+		reqs, _ := g.getRequestsLocked(col.ID)
+		for _, req := range reqs {
+			if req.ID == mc.RequestID {
+				if err := os.MkdirAll(g.mocksDir(col.ID), 0700); err != nil {
+					return err
+				}
+				return g.writePrettyJSON(g.mockPath(col.ID, mc.RequestID), mc)
+			}
+		}
+	}
+	return fmt.Errorf("request not found: %s", mc.RequestID)
+}
+
+// GetMockConfig loads all mock configs for a collection.
+func (g *GitStore) GetMockConfigs(collectionID string) ([]models.MockConfig, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	dir := g.mocksDir(collectionID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.MockConfig{}, nil
+		}
+		return nil, err
+	}
+
+	var configs []models.MockConfig
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".mock.gopost.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var mc models.MockConfig
+		if err := json.Unmarshal(data, &mc); err != nil {
+			continue
+		}
+		configs = append(configs, mc)
+	}
+	return configs, nil
+}
+
+// DeleteMockConfig removes a mock configuration for a request.
+func (g *GitStore) DeleteMockConfig(collectionID, requestID string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return os.Remove(g.mockPath(collectionID, requestID))
 }
 
 func (g *GitStore) GetBaseDir() string                { return g.baseDir }

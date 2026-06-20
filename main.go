@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,18 +22,34 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 func main() {
 	// Get app data directory
 	homeDir, _ := os.UserHomeDir()
 	appDataDir := filepath.Join(homeDir, ".gopost")
-	os.MkdirAll(appDataDir, 0755)
+	os.MkdirAll(appDataDir, 0700)
+
+	// Configure structured logging: JSON to file, text to stderr in dev.
+	logFile, err := os.OpenFile(filepath.Join(appDataDir, "gopost.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err == nil {
+		defer logFile.Close()
+		fileHandler := slog.NewJSONHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo})
+		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+		slog.SetDefault(slog.New(&multiHandler{handlers: []slog.Handler{fileHandler, stderrHandler}}))
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	}
 
 	// Create app
 	appInstance := app.NewApp(appDataDir)
 
 	distFS, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
-		panic(err)
+		slog.Error("failed to embed frontend assets", "error", err)
+		os.Exit(1)
 	}
 
 	staticHandler := http.FileServer(http.FS(distFS))
@@ -55,6 +73,9 @@ func main() {
 		},
 	})
 
+	// Register graceful shutdown hook for mock server cleanup
+	wailsApp.OnShutdown(func() { appInstance.Shutdown() })
+
 	// Create the app window
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "GoPost",
@@ -65,8 +86,48 @@ func main() {
 
 	err = wailsApp.Run()
 	if err != nil {
-		panic(err)
+		slog.Error("failed to start application", "error", err)
+		os.Exit(1)
 	}
+}
+
+// multiHandler dispatches log records to multiple slog.Handler implementations.
+type multiHandler struct {
+	handlers []slog.Handler
+}
+
+func (m *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, h := range m.handlers {
+		if err := h.Handle(ctx, r.Clone()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	h := &multiHandler{}
+	for _, handler := range m.handlers {
+		h.handlers = append(h.handlers, handler.WithAttrs(attrs))
+	}
+	return h
+}
+
+func (m *multiHandler) WithGroup(name string) slog.Handler {
+	h := &multiHandler{}
+	for _, handler := range m.handlers {
+		h.handlers = append(h.handlers, handler.WithGroup(name))
+	}
+	return h
 }
 
 func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
@@ -216,7 +277,11 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/execute")
-		data, err := appInstance.ExecuteRequest(id)
+		var payload struct {
+			EnvVars map[string]string `json:"envVars"`
+		}
+		decodeJSON(r, &payload)
+		data, err := appInstance.ExecuteRequest(id, payload.EnvVars)
 		writeJSON(w, data, err)
 		return
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/auth"):
@@ -319,26 +384,6 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/runs/")
 		data, err := appInstance.GetRunHistory(id)
 		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/export":
-		var payload struct {
-			Path string `json:"path"`
-		}
-		if err := decodeJSON(r, &payload); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.ExportData(payload.Path))
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/import":
-		var payload struct {
-			Path string `json:"path"`
-		}
-		if err := decodeJSON(r, &payload); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.ImportData(payload.Path))
 		return
 	case r.Method == http.MethodGet && r.URL.Path == "/api/export-content":
 		data, err := appInstance.ExportSnapshot()
@@ -520,18 +565,6 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, data, err)
 		return
 
-	case r.Method == http.MethodPost && r.URL.Path == "/api/exec":
-		var payload struct {
-			Command string `json:"command"`
-		}
-		if err := decodeJSON(r, &payload); err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		data, err := appInstance.ExecCommand(payload.Command)
-		writeJSON(w, data, err)
-		return
-
 	// Scripting operations
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/get"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/get")
@@ -575,6 +608,66 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		data := appInstance.RunTestScript(id, payload.Script, payload.Response)
 		writeJSON(w, data, nil)
+		return
+
+	// Mock server operations
+	case r.Method == http.MethodPost && r.URL.Path == "/api/mock/start":
+		var payload struct {
+			Port int `json:"port"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if payload.Port == 0 {
+			payload.Port = 3001
+		}
+		err := appInstance.StartMockServer(payload.Port)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/mock/stop":
+		err := appInstance.StopMockServer()
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/mock/status":
+		data := appInstance.GetMockStatus()
+		writeJSON(w, data, nil)
+		return
+	case r.Method == http.MethodGet && r.URL.Path == "/api/mock/log":
+		writeJSON(w, appInstance.GetMockLog(), nil)
+		return
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/mock/log":
+		appInstance.ClearMockLog()
+		writeJSON(w, map[string]bool{"ok": true}, nil)
+		return
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/mock/config") && strings.HasSuffix(r.URL.Path, "/set"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mock/config/"), "/set")
+		var payload struct {
+			StatusCode int               `json:"statusCode"`
+			Headers    map[string]string `json:"headers"`
+			Body       string            `json:"body"`
+			LatencyMs  int               `json:"latencyMs"`
+			Enabled    bool              `json:"enabled"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if payload.StatusCode == 0 {
+			payload.StatusCode = 200
+		}
+		data, err := appInstance.SetMockConfig(id, payload.StatusCode, payload.Headers, payload.Body, payload.LatencyMs, payload.Enabled)
+		writeJSON(w, data, err)
+		return
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/mock/config/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/mock/config/")
+		err := appInstance.RemoveMockConfig(id)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/mock/configs/") && strings.HasSuffix(r.URL.Path, "/list"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mock/configs/"), "/list")
+		data, err := appInstance.LoadMockConfigs(id)
+		writeJSON(w, data, err)
 		return
 
 	default:

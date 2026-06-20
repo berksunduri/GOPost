@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { api } from "@/api";
+import log from "@/lib/log";
 import { useAppStatus } from "@/context/AppStatusContext";
 import { useTabs } from "@/context/TabsContext";
 
@@ -71,7 +72,7 @@ export function RequestsProvider({ children }) {
         }));
         setVirtualRequest(null);
       } catch (e) {
-        console.error("Error loading requests:", e);
+        log.error("Error loading requests:", e);
       }
     },
     [runWithStatus],

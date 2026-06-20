@@ -350,10 +350,13 @@ export const api = {
       }),
     });
   },
-  async ExecuteRequest(id) {
+  async ExecuteRequest(id, envVars) {
     const service = getAppService();
-    if (service) return service.ExecuteRequest(id);
-    return fetchJSON(`/api/requests/${id}/execute`, { method: "POST" });
+    if (service) return service.ExecuteRequest(id, envVars || {});
+    return fetchJSON(`/api/requests/${id}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ envVars: envVars || {} }),
+    });
   },
   async ExecCommand(command) {
     const service = getAppService();
@@ -552,5 +555,75 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ script, response }),
     });
+  },
+
+  // ==================== Mock Server ====================
+  async StartMockServer(port) {
+    const service = getAppService();
+    if (service && typeof service.StartMockServer === "function")
+      return service.StartMockServer(port);
+    return fetchJSON("/api/mock/start", {
+      method: "POST",
+      body: JSON.stringify({ port }),
+    });
+  },
+  async StopMockServer() {
+    const service = getAppService();
+    if (service && typeof service.StopMockServer === "function")
+      return service.StopMockServer();
+    return fetchJSON("/api/mock/stop", { method: "POST" });
+  },
+  async GetMockStatus() {
+    const service = getAppService();
+    if (service && typeof service.GetMockStatus === "function")
+      return service.GetMockStatus();
+    return fetchJSON("/api/mock/status");
+  },
+  async SetMockConfig(
+    requestId,
+    { statusCode, headers, body, latencyMs, enabled },
+  ) {
+    const service = getAppService();
+    if (service && typeof service.SetMockConfig === "function")
+      return service.SetMockConfig(
+        requestId,
+        statusCode,
+        headers,
+        body,
+        latencyMs,
+        enabled,
+      );
+    return fetchJSON(`/api/mock/config/${encodeURIComponent(requestId)}/set`, {
+      method: "POST",
+      body: JSON.stringify({ statusCode, headers, body, latencyMs, enabled }),
+    });
+  },
+  async RemoveMockConfig(requestId) {
+    const service = getAppService();
+    if (service && typeof service.RemoveMockConfig === "function")
+      return service.RemoveMockConfig(requestId);
+    return fetchJSON(`/api/mock/config/${encodeURIComponent(requestId)}`, {
+      method: "DELETE",
+    });
+  },
+  async LoadMockConfigs(collectionId) {
+    const service = getAppService();
+    if (service && typeof service.LoadMockConfigs === "function")
+      return service.LoadMockConfigs(collectionId);
+    return fetchJSON(
+      `/api/mock/configs/${encodeURIComponent(collectionId)}/list`,
+    );
+  },
+  async GetMockLog() {
+    const service = getAppService();
+    if (service && typeof service.GetMockLog === "function")
+      return service.GetMockLog();
+    return fetchJSON("/api/mock/log");
+  },
+  async ClearMockLog() {
+    const service = getAppService();
+    if (service && typeof service.ClearMockLog === "function")
+      return service.ClearMockLog();
+    return fetchJSON("/api/mock/log", { method: "DELETE" });
   },
 };

@@ -19,6 +19,7 @@ import EnvironmentManager from "@/components/EnvironmentManager";
 import HistoryPanel from "@/components/HistoryPanel";
 import { TabBar } from "@/components/TabBar";
 import { TerminalPanel } from "@/components/TerminalPanel";
+import { MockPanel } from "@/components/MockPanel";
 import { GitPanel } from "@/components/GitPanel";
 import { ActivityBar } from "@/components/ActivityBar";
 import { SettingsModal } from "@/components/settings/SettingsModal";
@@ -314,9 +315,9 @@ function App() {
       a.download = `gopost-export-${ts}.json`;
       document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       a.remove();
-      alert(t("exportSuccess"));
+      toast.success(t("exportSuccess"));
     } catch (err) {
       toast.error(`${t("exportFailed")}: ${err.message}`);
     }
@@ -470,6 +471,7 @@ function App() {
           )}
           {activity === "git" && <GitPanel />}
           {activity === "history" && <HistoryPanel />}
+          {activity === "mock" && <MockPanel width={sidebarWidth} />}
         </div>
 
         {/* Resize handle */}

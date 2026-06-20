@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { useTheme } from "@/context/ThemeContext";
+import { useTheme, COLOR_VARS } from "@/context/ThemeContext";
 import { useUserConfig } from "@/context/UserConfigContext";
 import {
   Dialog,
@@ -14,7 +14,13 @@ import {
   ScrollArea,
   Label,
 } from "@/components/ui";
-import { Palette, Keyboard, RotateCcw } from "lucide-react";
+import {
+  Palette,
+  Keyboard,
+  RotateCcw,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { t } from "@/i18n";
 import {
   DEFAULT_SHORTCUTS,
@@ -24,6 +30,135 @@ import {
   shortcutsEqual,
 } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
+
+// ── HSL ↔ Hex conversion helpers ──────────────────────────────────────────
+
+/** Parse an HSL string like "215 21% 11%" into [h, s, l] numbers. */
+function parseHSL(hsl) {
+  const parts = hsl?.trim().split(/\s+/);
+  if (!parts || parts.length < 3) return null;
+  const h = parseFloat(parts[0]);
+  const s = parseFloat(parts[1]);
+  const l = parseFloat(parts[2]);
+  if (isNaN(h) || isNaN(s) || isNaN(l)) return null;
+  return [h, s, l];
+}
+
+/** Convert [h, s%, l%] to a hex color string. */
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+/** Convert a hex color (e.g. "#1e2a3b") to HSL [h, s%, l%]. */
+function hexToHSL(hex) {
+  let r, g, b;
+  if (hex.length === 7) {
+    r = parseInt(hex.slice(1, 3), 16) / 255;
+    g = parseInt(hex.slice(3, 5), 16) / 255;
+    b = parseInt(hex.slice(5, 7), 16) / 255;
+  } else if (hex.length === 4) {
+    r = parseInt(hex[1] + hex[1], 16) / 255;
+    g = parseInt(hex[2] + hex[2], 16) / 255;
+    b = parseInt(hex[3] + hex[3], 16) / 255;
+  } else {
+    return null;
+  }
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
+  let h = 0,
+    s = 0,
+    l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        break;
+      case g:
+        h = ((b - r) / d + 2) / 6;
+        break;
+      case b:
+        h = ((r - g) / d + 4) / 6;
+        break;
+    }
+  }
+  return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+}
+
+/** Get the computed HSL value of a CSS variable from the current theme. */
+function getCurrentHSL(varName) {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue(varName)
+    .trim();
+  return raw || null;
+}
+
+// ── Color picker row component ─────────────────────────────────────────────
+
+function ColorRow({ varKey, label, value, onChange, onReset }) {
+  const hsl = value ? parseHSL(value) : null;
+  const hex = hsl ? hslToHex(hsl[0], hsl[1], hsl[2]) : "#000000";
+  const isCustom = value !== undefined && value !== "";
+
+  const handleHexChange = (e) => {
+    const newHex = e.target.value;
+    const newHsl = hexToHSL(newHex);
+    if (newHsl) {
+      onChange(varKey, `${newHsl[0]} ${newHsl[1]}% ${newHsl[2]}%`);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 py-1.5 border-b border-border/30 last:border-0",
+        isCustom && "bg-primary/5 -mx-2 px-2 rounded",
+      )}
+    >
+      <div className="relative shrink-0">
+        <input
+          type="color"
+          value={hex}
+          onChange={handleHexChange}
+          className="w-7 h-7 rounded border border-border cursor-pointer p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded [&::-webkit-color-swatch]:border-0"
+          title={label}
+        />
+      </div>
+      <span className="text-xs flex-1 truncate">{label}</span>
+      <code
+        className={cn(
+          "text-[11px] font-mono shrink-0",
+          isCustom ? "text-primary" : "text-muted-foreground",
+        )}
+      >
+        {value || (hsl ? `${hsl[0]} ${hsl[1]}% ${hsl[2]}%` : "—")}
+      </code>
+      {isCustom && (
+        <button
+          type="button"
+          onClick={() => onReset(varKey)}
+          className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground shrink-0"
+          title={t("resetShortcut")}
+        >
+          <RotateCcw className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Settings modal ─────────────────────────────────────────────────────────
 
 const SECTIONS = [
   { id: "appearance", labelKey: "settingsAppearance", icon: Palette },
@@ -95,11 +230,13 @@ export function SettingsModal({
   onClose,
   defaultSection = "appearance",
 }) {
-  const { themeId, setThemeId, themeList } = useTheme();
+  const { themeId, setThemeId, themeList, customColors, setCustomColors } =
+    useTheme();
   const { shortcuts, updateShortcut, resetShortcut } = useUserConfig();
   const [section, setSection] = useState(defaultSection);
   const [capturingId, setCapturingId] = useState(null);
   const [conflict, setConflict] = useState(null);
+  const [colorGroupOpen, setColorGroupOpen] = useState({});
 
   // Resolve with defaults fallback
   const getKeys = useCallback(
@@ -173,6 +310,32 @@ export function SettingsModal({
     [resetShortcut],
   );
 
+  const handleColorChange = useCallback(
+    (varKey, hslValue) => {
+      setCustomColors((prev) => ({ ...prev, [varKey]: hslValue }));
+    },
+    [setCustomColors],
+  );
+
+  const handleColorReset = useCallback(
+    (varKey) => {
+      setCustomColors((prev) => {
+        const next = { ...prev };
+        delete next[varKey];
+        return next;
+      });
+    },
+    [setCustomColors],
+  );
+
+  const handleResetAllColors = useCallback(() => {
+    setCustomColors({});
+  }, [setCustomColors]);
+
+  const toggleColorGroup = useCallback((group) => {
+    setColorGroupOpen((prev) => ({ ...prev, [group]: !prev[group] }));
+  }, []);
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="sm:max-w-2xl p-0 gap-0 overflow-hidden">
@@ -235,6 +398,59 @@ export function SettingsModal({
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  {/* Custom color editor */}
+                  <div className="pt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <Label className="text-xs font-semibold">
+                        Customize Colors
+                      </Label>
+                      {Object.keys(customColors).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleResetAllColors}
+                          className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Reset all
+                        </button>
+                      )}
+                    </div>
+                    <div className="rounded-md border bg-card/50 px-3 py-1">
+                      {COLOR_VARS.map(({ group, vars }) => {
+                        const isOpen = colorGroupOpen[group] !== false; // default open
+                        return (
+                          <div key={group}>
+                            <button
+                              type="button"
+                              onClick={() => toggleColorGroup(group)}
+                              className="flex items-center gap-2 w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              {isOpen ? (
+                                <ChevronDown className="h-3 w-3" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3" />
+                              )}
+                              {group}
+                            </button>
+                            {isOpen && (
+                              <div className="pb-1">
+                                {vars.map(({ key, label }) => (
+                                  <ColorRow
+                                    key={key}
+                                    varKey={key}
+                                    label={label}
+                                    value={customColors[key]}
+                                    onChange={handleColorChange}
+                                    onReset={handleColorReset}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}

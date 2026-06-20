@@ -164,11 +164,42 @@ const THEMES = {
       --sidebar-accent-foreground: 219 14% 80%;
     `,
   },
+  fleafy: {
+    name: "Fleafy",
+    icon: "leaf",
+    css: `
+      --background: 281 22% 12%;
+      --foreground: 237 18% 72%;
+      --card: 281 22% 15%;
+      --card-foreground: 237 18% 72%;
+      --popover: 281 22% 15%;
+      --popover-foreground: 237 18% 72%;
+      --primary: 45 88% 57%;
+      --primary-foreground: 281 22% 12%;
+      --secondary: 33 20% 16%;
+      --secondary-foreground: 33 89% 65%;
+      --muted: 281 15% 18%;
+      --muted-foreground: 237 14% 55%;
+      --accent: 281 20% 22%;
+      --accent-foreground: 237 18% 78%;
+      --destructive: 16 90% 51%;
+      --destructive-foreground: 0 0% 100%;
+      --border: 281 18% 25%;
+      --input: 281 18% 25%;
+      --ring: 45 88% 57%;
+      --radius: 0.5rem;
+      --sidebar: 281 22% 8%;
+      --sidebar-foreground: 237 18% 68%;
+      --sidebar-border: 281 18% 20%;
+      --sidebar-accent: 281 20% 18%;
+      --sidebar-accent-foreground: 237 18% 75%;
+    `,
+  },
 };
 
 const ThemeContext = createContext(null);
 
-function applyThemeCSS(css) {
+function applyThemeCSS(css, overrides) {
   const root = document.documentElement;
   css.split(";").forEach((line) => {
     const trimmed = line.trim();
@@ -179,6 +210,12 @@ function applyThemeCSS(css) {
       root.style.setProperty(key.trim(), value);
     }
   });
+  // Apply user custom color overrides on top
+  if (overrides) {
+    Object.entries(overrides).forEach(([key, value]) => {
+      if (value) root.style.setProperty(key, value);
+    });
+  }
 }
 
 export function ThemeProvider({ children }) {
@@ -186,14 +223,16 @@ export function ThemeProvider({ children }) {
   const {
     themeId: ucThemeId,
     setThemeId: ucSetThemeId,
+    customColors,
+    setCustomColors,
     loaded,
   } = useUserConfig();
 
   const theme = THEMES[ucThemeId] || THEMES["github-dark"];
 
   useEffect(() => {
-    applyThemeCSS(theme.css);
-  }, [ucThemeId, theme.css]);
+    applyThemeCSS(theme.css, customColors);
+  }, [ucThemeId, theme.css, customColors]);
 
   const themeList = useMemo(
     () => Object.entries(THEMES).map(([id, t]) => ({ id, name: t.name })),
@@ -206,8 +245,10 @@ export function ThemeProvider({ children }) {
       setThemeId: ucSetThemeId,
       theme,
       themeList,
+      customColors,
+      setCustomColors,
     }),
-    [ucThemeId, ucSetThemeId, theme, themeList],
+    [ucThemeId, ucSetThemeId, theme, themeList, customColors, setCustomColors],
   );
 
   return (
@@ -222,3 +263,52 @@ export function useTheme() {
 }
 
 export { THEMES };
+
+// Editable color variables for the custom theme editor.
+// Each entry maps a CSS variable name to a human-readable label and category.
+export const COLOR_VARS = [
+  {
+    group: "Surface",
+    vars: [
+      { key: "--background", label: "Background" },
+      { key: "--foreground", label: "Text" },
+      { key: "--card", label: "Card" },
+      { key: "--card-foreground", label: "Card Text" },
+      { key: "--sidebar", label: "Sidebar" },
+      { key: "--sidebar-foreground", label: "Sidebar Text" },
+    ],
+  },
+  {
+    group: "Accent",
+    vars: [
+      { key: "--primary", label: "Primary" },
+      { key: "--primary-foreground", label: "Primary Text" },
+      { key: "--ring", label: "Focus Ring" },
+    ],
+  },
+  {
+    group: "Interactive",
+    vars: [
+      { key: "--secondary", label: "Secondary" },
+      { key: "--secondary-foreground", label: "Secondary Text" },
+      { key: "--muted", label: "Muted" },
+      { key: "--muted-foreground", label: "Muted Text" },
+      { key: "--accent", label: "Accent" },
+      { key: "--accent-foreground", label: "Accent Text" },
+    ],
+  },
+  {
+    group: "Edges",
+    vars: [
+      { key: "--border", label: "Border" },
+      { key: "--input", label: "Input" },
+    ],
+  },
+  {
+    group: "Destructive",
+    vars: [
+      { key: "--destructive", label: "Destructive" },
+      { key: "--destructive-foreground", label: "Destructive Text" },
+    ],
+  },
+];

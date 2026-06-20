@@ -5,6 +5,7 @@ import { EnvironmentsProvider } from "@/context/EnvironmentsContext";
 import { HistoryProvider } from "@/context/HistoryContext";
 import { RequestsProvider } from "@/context/RequestsContext";
 import { CollectionsProvider } from "@/context/CollectionsContext";
+import { MockServerProvider } from "@/context/MockServerContext";
 import { AppBootstrap } from "@/context/AppBootstrap";
 
 export function AppProvider({ children }) {
@@ -15,7 +16,9 @@ export function AppProvider({ children }) {
           <HistoryProvider>
             <RequestsProvider>
               <CollectionsProvider>
-                <AppBootstrap>{children}</AppBootstrap>
+                <MockServerProvider>
+                  <AppBootstrap>{children}</AppBootstrap>
+                </MockServerProvider>
               </CollectionsProvider>
             </RequestsProvider>
           </HistoryProvider>

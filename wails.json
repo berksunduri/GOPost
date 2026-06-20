@@ -3,6 +3,7 @@
   "outputType": "desktop",
   "debounce": 700,
   "devServer": "http://localhost:34115",
+  "//_devServer": "Port must match vite.config.js server.port (34115). Keep in sync with Taskfile.yml, dev-frontend.sh, run.sh.",
   "frontend": {
     "dir": "frontend",
     "wailsjs": "frontend/src/wailsjs"

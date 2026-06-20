@@ -161,8 +161,29 @@ type CachedGraphQLSchema struct {
 
 // UserConfig stores user preferences persisted in settings/user-config.gopost.json
 type UserConfig struct {
-	ThemeID   string              `json:"theme_id"`
-	Shortcuts map[string][]string `json:"shortcuts"` // actionId → key combo (e.g. "send" → ["mod","Enter"])
+	ThemeID      string              `json:"theme_id"`
+	Shortcuts    map[string][]string `json:"shortcuts"`     // actionId → key combo (e.g. "send" → ["mod","Enter"])
+	CustomColors map[string]string   `json:"custom_colors"` // CSS var → HSL value overrides (e.g. "--primary" → "210 100% 55%")
+}
+
+// MockConfig defines a mock response for a request.
+// Stored alongside requests at: collections/{name}/mocks/{requestID}.mock.gopost.json
+type MockConfig struct {
+	RequestID  string            `json:"request_id"`
+	Method     string            `json:"method"`
+	Path       string            `json:"path"`
+	StatusCode int               `json:"status_code"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	LatencyMs  int               `json:"latency_ms"` // simulated delay
+	Enabled    bool              `json:"enabled"`
+}
+
+// MockStatus reports the current state of the mock server.
+type MockStatus struct {
+	Running  bool         `json:"running"`
+	Port     int          `json:"port"`
+	Handlers []MockConfig `json:"handlers"`
 }
 
 func RequestFileFromHTTPRequest(req *HTTPRequest) *RequestFile {

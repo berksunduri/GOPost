@@ -62,7 +62,7 @@ func InitRepo(collectionDir string) error {
 			"!collection.gopost.json\n" +
 			"!requests/*.gopost.json\n" +
 			"*\n"
-		os.WriteFile(gitignore, []byte(content), 0644)
+		os.WriteFile(gitignore, []byte(content), 0600)
 	}
 
 	// Create initial commit if this is a fresh repo

@@ -36,9 +36,10 @@ import { api } from "@/api";
 import { parseCurl } from "@/lib/parseCurl";
 import { resolveJSONPath } from "@/lib/jsonpath";
 import { toast } from "sonner";
-import { Send } from "lucide-react";
+import { Send, Server } from "lucide-react";
 import { Button, Input } from "@/components/ui";
 import { CodeGenMenu } from "@/components/CodeGenMenu";
+import { useMockServer } from "@/context/MockServerContext";
 
 function RequestEditor() {
   const { selectedCollection, collections } = useCollections();
@@ -53,6 +54,12 @@ function RequestEditor() {
     markDirty,
     markSaved,
   } = useTabs();
+  const {
+    status: mockStatus,
+    setMock,
+    removeMock,
+    mockConfigs,
+  } = useMockServer();
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   const request = activeTab?.request;
@@ -98,6 +105,16 @@ function RequestEditor() {
 
   // Send-sequence ref
   const sendSeqRef = useRef(0);
+
+  // Mock config
+  const [showMockConfig, setShowMockConfig] = useState(false);
+  const [mockStatusCode, setMockStatusCode] = useState(200);
+  const [mockBody, setMockBody] = useState("{}");
+  const [mockLatency, setMockLatency] = useState(0);
+
+  // Derive mock state from global config
+  const currentMock = request?.id ? mockConfigs[request.id] : null;
+  const isMocked = currentMock?.enabled || false;
 
   // Sync state when the active tab changes
   useEffect(() => {
@@ -149,6 +166,16 @@ function RequestEditor() {
     // Script fields
     setPreRequestScript(request.pre_request_script || "");
     setTestScript(request.test_script || "");
+
+    // Mock state
+    if (currentMock) {
+      setShowMockConfig(true);
+      setMockStatusCode(currentMock.status_code || 200);
+      setMockBody(currentMock.body || "{}");
+      setMockLatency(currentMock.latency_ms || 0);
+    } else {
+      setShowMockConfig(false);
+    }
   }, [activeTabId]);
 
   // Only set initial tab when activeTabId actually changes (save doesn't reset it)
@@ -215,9 +242,14 @@ function RequestEditor() {
   }, [params, url, applyEnv]);
 
   const upsertRequest = useCallback(async () => {
-    const h = mapHeaders();
-    const u = effectiveURL;
-    const b = applyEnv(body);
+    // Build headers from key/value pairs without env substitution.
+    // Substitution happens server-side in ExecuteRequest.
+    const h = {};
+    headers.forEach((row) => {
+      if (row.key.trim()) h[row.key.trim()] = row.value.trim();
+    });
+    const u = url;
+    const b = body;
     if (request?.id && !request.id.startsWith("new-")) {
       let updated;
       if (isGraphQL) {
@@ -401,7 +433,7 @@ function RequestEditor() {
       if (seq !== sendSeqRef.current) return;
       const result = isGraphQL
         ? await api.ExecuteGraphQLRequest(req.id)
-        : await api.ExecuteRequest(req.id);
+        : await api.ExecuteRequest(req.id, envVars);
       if (seq !== sendSeqRef.current) return;
       setResponse(result);
 
@@ -471,6 +503,7 @@ function RequestEditor() {
     isGraphQL,
     isConnectionMode,
     extracts,
+    envVars,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -482,6 +515,48 @@ function RequestEditor() {
       toast.error(e.message);
     }
   }, [upsertRequest, refreshRequests]);
+
+  // Mock toggle handler
+  const handleMockToggle = useCallback(async () => {
+    if (!request?.id) return;
+    if (isMocked) {
+      await removeMock(request.id);
+      setShowMockConfig(false);
+    } else {
+      setShowMockConfig(true);
+      // Pre-populate from existing mock or default
+      if (currentMock) {
+        setMockStatusCode(currentMock.status_code || 200);
+        setMockBody(currentMock.body || "{}");
+        setMockLatency(currentMock.latency_ms || 0);
+      }
+    }
+  }, [request?.id, isMocked, currentMock, removeMock]);
+
+  const handleMockSave = useCallback(async () => {
+    if (!request?.id) return;
+    const u = (() => {
+      try {
+        return new URL(url);
+      } catch {
+        return { pathname: "/" };
+      }
+    })();
+    await setMock(request.id, method, u.pathname, {
+      statusCode: mockStatusCode,
+      body: mockBody,
+      latencyMs: mockLatency,
+      enabled: true,
+    });
+  }, [
+    request?.id,
+    method,
+    url,
+    mockStatusCode,
+    mockBody,
+    mockLatency,
+    setMock,
+  ]);
 
   // Handle schema field insertion from explorer
   const handleInsertField = useCallback((fieldName) => {
@@ -613,14 +688,26 @@ function RequestEditor() {
           extraButtons={
             <>
               {!isConnectionMode && (
-                <CodeGenMenu
-                  request={{
-                    method,
-                    url,
-                    headers,
-                    body,
-                  }}
-                />
+                <>
+                  <Button
+                    variant={isMocked ? "default" : "ghost"}
+                    size="sm"
+                    className="h-8 text-xs gap-1"
+                    onClick={handleMockToggle}
+                    title={t("mockToggle")}
+                  >
+                    <Server className="h-3.5 w-3.5" />
+                    Mock
+                  </Button>
+                  <CodeGenMenu
+                    request={{
+                      method,
+                      url,
+                      headers,
+                      body,
+                    }}
+                  />
+                </>
               )}
               {isGraphQL && (
                 <Button
@@ -636,6 +723,71 @@ function RequestEditor() {
           }
         />
       </div>
+
+      {/* Mock config panel */}
+      {showMockConfig && request?.id && (
+        <div className="mx-4 mt-2 p-3 border rounded-md bg-muted/30 space-y-2">
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Mock Response
+            </span>
+            {mockStatus.running && (
+              <span className="text-[10px] text-green-400 font-mono">
+                Server is live on :{mockStatus.port}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 items-center">
+            <label className="text-[10px] text-muted-foreground w-16 shrink-0">
+              {t("mockStatusCode")}
+            </label>
+            <Input
+              type="number"
+              value={mockStatusCode}
+              onChange={(e) =>
+                setMockStatusCode(parseInt(e.target.value) || 200)
+              }
+              className="h-7 w-20 text-xs font-mono"
+              min={100}
+              max={599}
+            />
+            <label className="text-[10px] text-muted-foreground ml-2 w-14 shrink-0">
+              {t("mockLatency")}
+            </label>
+            <Input
+              type="number"
+              value={mockLatency}
+              onChange={(e) => setMockLatency(parseInt(e.target.value) || 0)}
+              className="h-7 w-16 text-xs font-mono"
+              min={0}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-muted-foreground block mb-1">
+              {t("mockResponseBody")}
+            </label>
+            <textarea
+              value={mockBody}
+              onChange={(e) => setMockBody(e.target.value)}
+              className="w-full h-24 text-xs font-mono bg-background border rounded p-2 resize-y"
+              placeholder='{"message": "hello"}'
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" className="h-7 text-xs" onClick={handleMockSave}>
+              {isMocked ? "Update Mock" : "Enable Mock"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setShowMockConfig(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Separator />
 

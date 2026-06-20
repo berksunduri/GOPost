@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { api } from "@/api";
+import log from "@/lib/log";
 import { useAppStatus } from "@/context/AppStatusContext";
 import { useHistory } from "@/context/HistoryContext";
 import { useRequests } from "@/context/RequestsContext";
@@ -40,7 +41,7 @@ export function CollectionsProvider({ children }) {
       );
       setCollections(result || []);
     } catch (e) {
-      console.error("Error loading collections:", e);
+      log.error("Error loading collections:", e);
     } finally {
       setIsLoading((prev) => ({ ...prev, collections: false }));
     }

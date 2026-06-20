@@ -16,7 +16,11 @@ import (
 
 func newStore(t *testing.T) *GitStore {
 	t.Helper()
-	return NewGitStore(t.TempDir())
+	s, err := NewGitStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func makeCollection(id, name string) *models.Collection {
@@ -322,17 +326,17 @@ func TestGitStore_History_PrependsMostRecent(t *testing.T) {
 	}
 }
 
-func TestGitStore_History_CapAt500(t *testing.T) {
+func TestGitStore_History_CapAt1000(t *testing.T) {
 	g := newStore(t)
-	for i := 0; i < 510; i++ {
+	for i := 0; i < 1010; i++ {
 		g.SaveHistoryEntry(&models.HistoryEntry{
 			ID: fmt.Sprintf("h%d", i), RequestID: "r1",
 			Method: "GET", URL: "https://example.com", CreatedAt: time.Now(),
 		})
 	}
 	h, _ := g.GetHistory()
-	if len(h) != 500 {
-		t.Errorf("want cap 500, got %d", len(h))
+	if len(h) != 1000 {
+		t.Errorf("want cap 1000, got %d", len(h))
 	}
 }
 

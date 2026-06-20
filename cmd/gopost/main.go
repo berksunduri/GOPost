@@ -25,7 +25,7 @@ import (
 	"gopost/app/pkg/runner/reporters"
 )
 
-var version = "1.0.0-dev"
+var version = "dev"
 
 func main() {
 	// Top-level flags
@@ -282,7 +282,6 @@ func lastModTime(path string) time.Time {
 	return fi.ModTime()
 }
 
-// splitFlags separates flags (starting with - or --) from positional arguments.
 func splitFlags(args []string) (flags []string, positional []string) {
 	for _, a := range args {
 		if len(a) > 0 && a[0] == '-' {

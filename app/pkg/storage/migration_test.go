@@ -62,7 +62,10 @@ func TestMigrateFromLegacy_Full(t *testing.T) {
 	}
 
 	// Verify GitStore has the data
-	git := NewGitStore(dir)
+	git, err := NewGitStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cols, _ := git.GetCollections()
 	if len(cols) != 1 || cols[0].Name != "Legacy Collection" {
 		t.Errorf("migrated collection: %v", cols)
@@ -101,7 +104,10 @@ func TestMigrateFromLegacy_BacksUpLegacyFiles(t *testing.T) {
 func TestMigrateFromLegacy_SkipsWhenGitStorePopulated(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-populate GitStore
-	git := NewGitStore(dir)
+	git, err := NewGitStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	git.SaveCollection(&models.Collection{ID: "g1", Name: "Already Migrated", CreatedAt: time.Now(), UpdatedAt: time.Now()})
 
 	// Also create legacy file

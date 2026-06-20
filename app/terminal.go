@@ -1,12 +1,15 @@
 package app
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -22,11 +25,11 @@ type termResize struct {
 func terminalEnv() []string {
 	env := os.Environ()
 	overrides := map[string]string{
-		"TERM":                    "xterm-256color",
-		"COLORTERM":               "truecolor",
-		"POSTGO_TERMINAL":         "1",
-		"STARSHIP_SHELL_INTEGRATION": "false",
-		"POWERLEVEL9K_INSTANT_PROMPT": "off",
+		"TERM":                                "xterm-256color",
+		"COLORTERM":                           "truecolor",
+		"POSTGO_TERMINAL":                     "1",
+		"STARSHIP_SHELL_INTEGRATION":          "false",
+		"POWERLEVEL9K_INSTANT_PROMPT":         "off",
 		"POWERLEVEL9K_TERM_SHELL_INTEGRATION": "off",
 	}
 	set := make(map[string]bool, len(overrides))
@@ -90,8 +93,30 @@ func writeToPTY(tty *os.File, msg []byte) error {
 	return err
 }
 
+// terminalSecret is a per-process random token that must be present in the
+// WebSocket path to prevent cross-origin access from other browser tabs.
+var terminalSecret string
+
+func init() {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	terminalSecret = hex.EncodeToString(b)
+}
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := strings.ToLower(r.Header.Get("Origin"))
+		// Allow wails:// and localhost origins (the Wails webview).
+		// In dev mode, Vite serves on localhost:34115 and proxies to Wails.
+		if origin == "" {
+			return true // no Origin header (native webview, non-browser client)
+		}
+		return strings.HasPrefix(origin, "wails://") ||
+			strings.HasPrefix(origin, "http://localhost:") ||
+			strings.HasPrefix(origin, "http://127.0.0.1:")
+	},
 }
 
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +132,7 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
-		log.Printf("terminal: %v", err)
+		slog.Error("terminal PTY start failed", "error", err)
 		return
 	}
 	defer tty.Close()
@@ -120,7 +145,7 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := writeToPTY(tty, msg); err != nil {
-				log.Printf("terminal write: %v", err)
+				slog.Error("terminal write failed", "error", err)
 				return
 			}
 		}

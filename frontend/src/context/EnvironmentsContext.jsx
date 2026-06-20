@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { api } from "@/api";
+import log from "@/lib/log";
 import { useAppStatus } from "@/context/AppStatusContext";
 import { toast } from "sonner";
 
@@ -76,7 +77,7 @@ export function EnvironmentsProvider({ children }) {
       );
       setEnvironments(result || []);
     } catch (e) {
-      console.error("Error loading environments:", e);
+      log.error("Error loading environments:", e);
     } finally {
       setIsLoading((prev) => ({ ...prev, environments: false }));
     }

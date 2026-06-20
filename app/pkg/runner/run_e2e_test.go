@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,17 +14,17 @@ import (
 )
 
 // newCountServer returns a server that responds with 200 to every request,
-// and returns the count of requests it has seen.
-func newCountServer(t *testing.T) (*httptest.Server, *int) {
+// and an atomic counter of requests seen (safe for parallel tests).
+func newCountServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 	t.Helper()
-	count := new(int)
+	var count atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*count++
+		count.Add(1)
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
-	return srv, count
+	return srv, &count
 }
 
 func writeHTTPFile(t *testing.T, dir, name, content string) string {
@@ -104,11 +105,11 @@ GET %s/fail
 }
 
 func TestRun_StopOnFail(t *testing.T) {
-	count := new(int)
+	var count atomic.Int64
 	// Rewrite handler so first request fails
 	realSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*count++
-		if *count == 1 {
+		n := count.Add(1)
+		if n == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -162,8 +163,8 @@ GET {{base_url}}/path
 	if result.Passed != 1 {
 		t.Errorf("Passed: want 1, got %d", result.Passed)
 	}
-	if *count != 1 {
-		t.Errorf("server hit count: want 1, got %d", *count)
+	if count.Load() != 1 {
+		t.Errorf("server hit count: want 1, got %d", count.Load())
 	}
 }
 
@@ -187,8 +188,8 @@ func TestRun_WithParallel(t *testing.T) {
 	if result.Total != 5 {
 		t.Errorf("Total: want 5, got %d", result.Total)
 	}
-	if *count != 5 {
-		t.Errorf("server hit count: want 5, got %d", *count)
+	if count.Load() != 5 {
+		t.Errorf("server hit count: want 5, got %d", count.Load())
 	}
 }
 

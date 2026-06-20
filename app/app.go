@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"gopost/app/pkg/gitops"
+	"gopost/app/pkg/mock"
 	"gopost/app/pkg/models"
 	"gopost/app/pkg/parser"
 	"gopost/app/pkg/scripting"
@@ -31,11 +34,11 @@ import (
 // App struct
 type App struct {
 	ctx           context.Context
-	storage       *storage.Storage  // Legacy — kept for reference during migration
-	git           *storage.GitStore // New Git-friendly storage
+	git           *storage.GitStore // Git-friendly storage
 	termPort      int               // Port for terminal WebSocket server
 	scriptEngine  *scripting.Engine // Starlark scripting engine
 	httpClient    *http.Client      // Shared HTTP client with connection pooling
+	mockServer    *mock.Server      // Built-in mock server
 	schemaCacheMu sync.RWMutex
 	schemaCache   map[string]*models.CachedGraphQLSchema // URL → cached schema
 
@@ -52,18 +55,24 @@ func NewApp(dataDir string) *App {
 	// Run migration from legacy JSON blobs to per-file GitStore
 	migrated, err := storage.MigrateFromLegacy(dataDir)
 	if err != nil {
-		fmt.Printf("[gopost] Migration warning: %v\n", err)
+		slog.Warn("migration warning", "error", err)
 	}
 	if migrated {
-		fmt.Println("[gopost] Data migrated to Git-friendly format.")
-		fmt.Println("[gopost] Old files backed up as .legacy.bak — you can delete them.")
+		slog.Info("data migrated to Git-friendly format")
+		slog.Info("old files backed up as .legacy.bak")
+	}
+
+	gitStore, err := storage.NewGitStore(dataDir)
+	if err != nil {
+		slog.Error("failed to initialize storage", "error", err)
+		// Continue with minimal app — storage will be unavailable.
 	}
 
 	return &App{
-		storage:      storage.New(dataDir),         // Legacy storage (for reference)
-		git:          storage.NewGitStore(dataDir), // New Git-friendly storage
-		scriptEngine: scripting.NewEngine(),        // Starlark scripting engine
-		httpClient:   newSharedHTTPClient(),        // Pooled HTTP client
+		git:          gitStore,
+		scriptEngine: scripting.NewEngine(), // Starlark scripting engine
+		httpClient:   newSharedHTTPClient(), // Pooled HTTP client
+		mockServer:   mock.NewServer(),      // Built-in mock server
 		schemaCache:  make(map[string]*models.CachedGraphQLSchema),
 		wsClients:    make(map[string]*websocket.Client),
 		sseClients:   make(map[string]*sse.Client),
@@ -146,7 +155,7 @@ func (a *App) UpdateCollection(id string, name string) (*models.Collection, erro
 func (a *App) DeleteCollection(id string) (map[string]bool, error) {
 	// Clean up history entries that reference this collection
 	if err := a.git.DeleteHistoryEntriesForCollection(id); err != nil {
-		fmt.Printf("[gopost] Warning: failed to clean history entries for collection %s: %v\n", id, err)
+		slog.Warn("failed to clean history entries", "collection", id, "error", err)
 	}
 	err := a.git.DeleteCollection(id)
 	return map[string]bool{"ok": true}, err
@@ -289,14 +298,29 @@ func (a *App) DeleteRequest(id string) (map[string]bool, error) {
 
 // ExecuteRequest executes an HTTP request and returns the response.
 // Runs pre-request scripts before sending and test scripts after receiving.
-func (a *App) ExecuteRequest(id string) (map[string]interface{}, error) {
+func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]interface{}, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Collect environment variables
-	env := a.collectEnvVars()
+	// Apply environment variable substitution to URL, body, and headers.
+	// This is the single source of truth — the frontend saves raw templates.
+	if len(envVars) > 0 {
+		request.URL = substituteVars(request.URL, envVars)
+		request.Body = substituteVars(request.Body, envVars)
+		substitutedHeaders := make(map[string]string, len(request.Headers))
+		for k, v := range request.Headers {
+			substitutedHeaders[substituteVars(k, envVars)] = substituteVars(v, envVars)
+		}
+		request.Headers = substitutedHeaders
+	}
+
+	// Script env is mainly for chaining between pre-request and test scripts.
+	env := envVars
+	if env == nil {
+		env = make(map[string]string)
+	}
 
 	// Run pre-request script
 	if request.PreRequestScript != "" {
@@ -504,7 +528,7 @@ func (a *App) ReplayHistoryEntry(entryID string) (map[string]interface{}, error)
 				return nil, reqErr
 			}
 			_, _ = a.SetRequestAuth(request.ID, entry.RequestAuth.Type, entry.RequestAuth.Token, entry.RequestAuth.Username, entry.RequestAuth.Password, entry.RequestAuth.APIKey, entry.RequestAuth.APIKeyValue, entry.RequestAuth.APIKeyIn)
-			return a.ExecuteRequest(request.ID)
+			return a.ExecuteRequest(request.ID, nil)
 		}
 	}
 	return nil, fmt.Errorf("history entry not found")
@@ -519,7 +543,7 @@ func (a *App) ExportData(filePath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, raw, 0644)
+	return os.WriteFile(filePath, raw, 0600)
 }
 
 func (a *App) ExportSnapshot() (*models.ExportData, error) {
@@ -710,7 +734,7 @@ func (a *App) ExportCollectionAsHTTPFile(collectionID string) (map[string]interf
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, "Downloads")
-	os.MkdirAll(dir, 0755)
+	os.MkdirAll(dir, 0700)
 
 	fileName := strings.Map(func(r rune) rune {
 		if r == ' ' {
@@ -720,12 +744,12 @@ func (a *App) ExportCollectionAsHTTPFile(collectionID string) (map[string]interf
 	}, col.Name) + ".http"
 	path := filepath.Join(dir, fileName)
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Open the file with the default app (macOS: opens in default text editor)
-	_ = exec.Command("open", path).Run()
+	// Open the file with the default app
+	_ = openPath(path)
 
 	return map[string]interface{}{
 		"path": path,
@@ -766,7 +790,7 @@ func (a *App) RunCollection(collectionID string, stopOnFail bool) (map[string]in
 	passed := 0
 	failed := 0
 	for _, request := range requests {
-		result, execErr := a.ExecuteRequest(request.ID)
+		result, execErr := a.ExecuteRequest(request.ID, nil)
 		item := map[string]interface{}{
 			"request_id":   request.ID,
 			"request_name": request.Name,
@@ -888,8 +912,20 @@ func (a *App) IntrospectGraphQLSchema(endpointURL string) (map[string]interface{
 		return nil, fmt.Errorf("introspection returned errors: %v", errors)
 	}
 
-	// Cache the schema
+	// Cache the schema (cap at 50 entries, evict oldest on overflow).
 	a.schemaCacheMu.Lock()
+	const maxSchemaCache = 50
+	if len(a.schemaCache) >= maxSchemaCache {
+		var oldestURL string
+		var oldestTime time.Time
+		for u, c := range a.schemaCache {
+			if oldestURL == "" || c.IntrospectedAt.Before(oldestTime) {
+				oldestURL = u
+				oldestTime = c.IntrospectedAt
+			}
+		}
+		delete(a.schemaCache, oldestURL)
+	}
 	a.schemaCache[endpointURL] = &models.CachedGraphQLSchema{
 		URL:            endpointURL,
 		Schema:         result,
@@ -1272,10 +1308,22 @@ func (a *App) GetSSEStatus(connID string) (map[string]interface{}, error) {
 
 // ==================== Storage / Filesystem ====================
 
+// openPath opens a file or directory in the system's default application.
+func openPath(p string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", p).Run()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", p).Run()
+	default:
+		return exec.Command("xdg-open", p).Run()
+	}
+}
+
 // RevealInFinder opens the collection directory in the system file browser.
 func (a *App) RevealInFinder(collectionID string) error {
 	dir := a.git.GetCollectionDir(collectionID)
-	return exec.Command("open", dir).Run()
+	return openPath(dir)
 }
 
 // GetStorageInfo returns metadata about the storage layout.
@@ -1293,11 +1341,11 @@ func (a *App) GetStorageInfo() map[string]string {
 func (a *App) startTerminalServer() {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		fmt.Printf("[terminal] failed to start: %v\n", err)
+		slog.Error("terminal server failed to start", "error", err)
 		return
 	}
 	a.termPort = listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("[terminal] WebSocket server on port %d\n", a.termPort)
+	slog.Info("terminal WebSocket server started", "port", a.termPort)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/terminal", HandleTerminalWS)
@@ -1311,11 +1359,21 @@ func (a *App) GetTerminalPort() int {
 
 // ==================== Scripting ====================
 
+// substituteVars replaces {{variable}} placeholders in a string with their
+// values from the given map. This is the canonical variable substitution used
+// by both the backend ExecuteRequest and the CLI runner.
+func substituteVars(s string, vars map[string]string) string {
+	for k, v := range vars {
+		s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+	}
+	return s
+}
+
 // collectEnvVars gathers environment variables from the active environment.
+// Env vars are now passed directly to ExecuteRequest by the frontend. This
+// function is retained for script chaining scenarios.
 func (a *App) collectEnvVars() map[string]string {
 	env := make(map[string]string)
-	// For now, return empty map. Env vars are applied by the frontend
-	// before calling ExecuteRequest. Script env is mainly for chaining.
 	return env
 }
 
@@ -1485,4 +1543,138 @@ func (a *App) ExecCommand(command string) (map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// ==================== Mock Server ====================
+
+// StartMockServer starts the built-in mock HTTP server on the given port.
+// After starting, it automatically loads all saved mock configs from all collections.
+func (a *App) StartMockServer(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
+	}
+	if err := a.mockServer.Start(port); err != nil {
+		return err
+	}
+
+	// Auto-load all saved mock configs on server start
+	cols, err := a.git.GetCollections()
+	if err != nil {
+		slog.Warn("mock: could not load collections", "error", err)
+		return nil
+	}
+	for _, col := range cols {
+		configs, err := a.git.GetMockConfigs(col.ID)
+		if err != nil {
+			continue
+		}
+		for _, mc := range configs {
+			a.mockServer.SetHandler(mc)
+		}
+	}
+	slog.Info("mock handlers loaded from disk", "count", len(a.mockServer.Status().Handlers))
+	return nil
+}
+
+// StopMockServer gracefully stops the mock server.
+func (a *App) StopMockServer() error {
+	return a.mockServer.Stop()
+}
+
+// Shutdown is called by Wails when the app is closing.
+// It ensures the mock server stops gracefully.
+func (a *App) Shutdown() {
+	slog.Info("shutting down")
+	_ = a.mockServer.Stop()
+
+	// Disconnect all active WebSocket clients
+	a.wsClientsMu.Lock()
+	for id, c := range a.wsClients {
+		_ = c.Disconnect()
+		delete(a.wsClients, id)
+	}
+	a.wsClientsMu.Unlock()
+
+	// Disconnect all active SSE clients
+	a.sseClientsMu.Lock()
+	for id, c := range a.sseClients {
+		_ = c.Disconnect()
+		delete(a.sseClients, id)
+	}
+	a.sseClientsMu.Unlock()
+}
+
+// SetMockConfig adds or updates a mock response configuration for a request.
+// The body, statusCode, headers, and latencyMs define what the mock server returns.
+func (a *App) SetMockConfig(requestID string, statusCode int, headers map[string]string, body string, latencyMs int, enabled bool) (*models.MockConfig, error) {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Derive path from the request URL
+	u, err := url.Parse(req.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid request URL: %w", err)
+	}
+
+	mc := &models.MockConfig{
+		RequestID:  requestID,
+		Method:     req.Method,
+		Path:       u.Path,
+		StatusCode: statusCode,
+		Headers:    headers,
+		Body:       body,
+		LatencyMs:  latencyMs,
+		Enabled:    enabled,
+	}
+
+	// Persist to disk
+	if err := a.git.SaveMockConfig(mc); err != nil {
+		return nil, err
+	}
+
+	// Register with the running server
+	a.mockServer.SetHandler(*mc)
+
+	return mc, nil
+}
+
+// RemoveMockConfig removes a mock configuration for a request.
+// Looks up the owning collection via the request's CollectionID for O(1) deletion.
+func (a *App) RemoveMockConfig(requestID string) error {
+	if req, err := a.git.GetRequest(requestID); err == nil && req.CollectionID != "" {
+		_ = a.git.DeleteMockConfig(req.CollectionID, requestID)
+	}
+	a.mockServer.RemoveHandler(requestID)
+	return nil
+}
+
+// GetMockStatus returns the current state of the mock server (running, port, handlers).
+func (a *App) GetMockStatus() *models.MockStatus {
+	status := a.mockServer.Status()
+	return &status
+}
+
+// LoadMockConfigs loads all saved mock configs for a collection and registers them with the server.
+// SetHandler is called for every config — disabled ones get evicted from the running set.
+func (a *App) LoadMockConfigs(collectionID string) ([]models.MockConfig, error) {
+	configs, err := a.git.GetMockConfigs(collectionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, mc := range configs {
+		a.mockServer.SetHandler(mc)
+	}
+	return configs, nil
+}
+
+// GetMockLog returns the recent request log from the mock server, newest first.
+func (a *App) GetMockLog() []mock.LogEntry {
+	return a.mockServer.Log()
+}
+
+// ClearMockLog empties the mock server's in-memory request log.
+func (a *App) ClearMockLog() {
+	a.mockServer.ClearLog()
 }

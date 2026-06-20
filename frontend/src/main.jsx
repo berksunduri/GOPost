@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AppProvider } from "@/context/AppProvider";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { UserConfigProvider } from "@/context/UserConfigContext";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster } from "sonner";
 import App from "@/App";
 import "@/App.css";
@@ -27,7 +28,9 @@ export function render() {
       <ThemeProvider>
         <AppProvider>
           {toaster}
-          <App />
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
         </AppProvider>
       </ThemeProvider>
     </UserConfigProvider>
