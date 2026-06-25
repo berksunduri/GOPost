@@ -15,6 +15,7 @@ import (
 
 	"gopost/app"
 	"gopost/app/pkg/models"
+	"gopost/app/pkg/storage"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -27,7 +28,11 @@ var version = "dev"
 
 func main() {
 	// Get app data directory
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("cannot determine home directory", "error", err)
+		os.Exit(1)
+	}
 	appDataDir := filepath.Join(homeDir, ".gopost")
 	os.MkdirAll(appDataDir, 0700)
 
@@ -43,8 +48,25 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	}
 
+	// Run migration from legacy JSON blobs to per-file GitStore
+	migrated, err := storage.MigrateFromLegacy(appDataDir)
+	if err != nil {
+		slog.Warn("migration warning", "error", err)
+	}
+	if migrated {
+		slog.Info("data migrated to Git-friendly format")
+		slog.Info("old files backed up as .legacy.bak")
+	}
+
+	// Initialize storage
+	store, err := storage.NewGitStore(appDataDir)
+	if err != nil {
+		slog.Error("failed to initialize storage", "error", err)
+		os.Exit(1)
+	}
+
 	// Create app
-	appInstance := app.NewApp(appDataDir)
+	appInstance := app.NewApp(store)
 
 	distFS, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
@@ -53,9 +75,10 @@ func main() {
 	}
 
 	staticHandler := http.FileServer(http.FS(distFS))
+	apiMux := newAPIRouter(appInstance)
 	assetHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			handleAPI(appInstance, w, r)
+			apiMux.ServeHTTP(w, r)
 			return
 		}
 		staticHandler.ServeHTTP(w, r)
@@ -130,15 +153,26 @@ func (m *multiHandler) WithGroup(name string) slog.Handler {
 	return h
 }
 
-func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+// newAPIRouter builds an http.ServeMux with all API routes registered.
+func newAPIRouter(appInstance *app.App) http.Handler {
+	mux := http.NewServeMux()
 
-	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/api/collections":
-		data, err := appInstance.GetCollections()
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/collections":
+	// h wraps a handler to set the Content-Type header on every API response.
+	h := func(fn func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fn(w, r)
+		}
+	}
+
+	// ── Collections ──────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/collections", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetCollections()
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/collections", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Name string `json:"name"`
 		}
@@ -146,16 +180,16 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.CreateCollection(payload.Name)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/collections/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/collections/")
-		data, err := appInstance.DeleteCollection(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/collections/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/collections/")
+		val, err := appInstance.CreateCollection(payload.Name)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("DELETE /api/collections/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.DeleteCollection(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/collections/{id}", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Name string `json:"name"`
 		}
@@ -163,16 +197,16 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.UpdateCollection(id, payload.Name)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/requests"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/requests")
-		data, err := appInstance.GetRequestsForCollection(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/requests"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/requests")
+		val, err := appInstance.UpdateCollection(r.PathValue("id"), payload.Name)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/collections/{id}/requests", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetRequestsForCollection(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/collections/{id}/requests", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Name        string            `json:"name"`
 			Method      string            `json:"method"`
@@ -185,11 +219,19 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.CreateRequest(id, payload.Name, payload.Method, payload.URL, payload.Headers, payload.Body, payload.Description)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/import-http"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/import-http")
+		val, err := appInstance.CreateRequest(app.CreateRequestParams{
+			CollectionID: r.PathValue("id"),
+			Name:         payload.Name,
+			Method:       payload.Method,
+			URL:          payload.URL,
+			Headers:      payload.Headers,
+			Body:         payload.Body,
+			Description:  payload.Description,
+		})
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/collections/{id}/import-http", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Content string `json:"content"`
 		}
@@ -197,21 +239,21 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.ImportHTTPContent(payload.Content, id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/export-http"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/export-http")
-		data, err := appInstance.ExportCollectionAsHTTPContent(id)
+		val, err := appInstance.ImportHTTPContent(payload.Content, r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/collections/{id}/export-http", h(func(w http.ResponseWriter, r *http.Request) {
+		data, err := appInstance.ExportCollectionAsHTTPContent(r.PathValue("id"))
 		writeJSON(w, map[string]string{"content": data}, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/export-http-file"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/export-http-file")
-		data, err := appInstance.ExportCollectionAsHTTPFile(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/run"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/run")
+	}))
+
+	mux.HandleFunc("POST /api/collections/{id}/export-http-file", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.ExportCollectionAsHTTPFile(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/collections/{id}/run", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			StopOnFail bool `json:"stopOnFail"`
 		}
@@ -219,42 +261,57 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.RunCollection(id, payload.StopOnFail)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/requests/"):
-		// Specific PUT sub-routes first
-		if strings.HasSuffix(r.URL.Path, "/move") {
-			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/move")
-			var payload struct {
-				CollectionID string `json:"collection_id"`
-			}
-			if err := decodeJSON(r, &payload); err != nil {
-				writeJSON(w, nil, err)
-				return
-			}
-			data, err := appInstance.MoveRequest(id, payload.CollectionID)
-			writeJSON(w, data, err)
+		val, err := appInstance.RunCollection(r.PathValue("id"), payload.StopOnFail)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/collections/{id}/reveal", h(func(w http.ResponseWriter, r *http.Request) {
+		err := appInstance.RevealInFinder(r.PathValue("id"))
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+	}))
+
+	// ── Requests ─────────────────────────────────────────────────
+
+	// Search must be registered before {id} so exact literal takes priority.
+	mux.HandleFunc("GET /api/requests/search", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.SearchRequests(r.URL.Query().Get("q"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/requests/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetRequest(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// Sub-routes with path suffix must come before the generic PUT {id}.
+	mux.HandleFunc("PUT /api/requests/{id}/move", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			CollectionID string `json:"collection_id"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/graphql") {
-			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/graphql")
-			var payload struct {
-				Query         string `json:"query"`
-				Variables     string `json:"variables"`
-				OperationName string `json:"operationName"`
-				SchemaURL     string `json:"schemaURL"`
-			}
-			if err := decodeJSON(r, &payload); err != nil {
-				writeJSON(w, nil, err)
-				return
-			}
-			data, err := appInstance.SetRequestGraphQL(id, payload.Query, payload.Variables, payload.OperationName, payload.SchemaURL)
-			writeJSON(w, data, err)
+		val, err := appInstance.MoveRequest(r.PathValue("id"), payload.CollectionID)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/requests/{id}/graphql", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query         string `json:"query"`
+			Variables     string `json:"variables"`
+			OperationName string `json:"operationName"`
+			SchemaURL     string `json:"schemaURL"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
 			return
 		}
-		// Generic PUT — update request
-		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
+		val, err := appInstance.SetRequestGraphQL(r.PathValue("id"), payload.Query, payload.Variables, payload.OperationName, payload.SchemaURL)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/requests/{id}", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Name        string            `json:"name"`
 			Method      string            `json:"method"`
@@ -267,25 +324,35 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.UpdateRequest(id, payload.Name, payload.Method, payload.URL, payload.Headers, payload.Body, payload.Description)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/requests/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
-		data, err := appInstance.DeleteRequest(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/execute")
+		val, err := appInstance.UpdateRequest(r.PathValue("id"), app.UpdateRequestParams{
+			Name:        payload.Name,
+			Method:      payload.Method,
+			URL:         payload.URL,
+			Headers:     payload.Headers,
+			Body:        payload.Body,
+			Description: payload.Description,
+		})
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("DELETE /api/requests/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.DeleteRequest(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/requests/{id}/execute", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			EnvVars map[string]string `json:"envVars"`
 		}
-		decodeJSON(r, &payload)
-		data, err := appInstance.ExecuteRequest(id, payload.EnvVars)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/auth"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/auth")
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ExecuteRequest(r.PathValue("id"), app.ExecuteRequestParams{EnvVars: payload.EnvVars})
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/requests/{id}/auth", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			AuthType    string `json:"authType"`
 			Token       string `json:"token"`
@@ -299,97 +366,110 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.SetRequestAuth(id, payload.AuthType, payload.Token, payload.Username, payload.Password, payload.APIKey, payload.APIKeyValue, payload.APIKeyIn)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/duplicate"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/duplicate")
-		data, err := appInstance.DuplicateRequest(id)
-		writeJSON(w, data, err)
-		return
+		val, err := appInstance.SetRequestAuth(r.PathValue("id"), app.SetRequestAuthParams{
+			AuthType:    payload.AuthType,
+			Token:       payload.Token,
+			Username:    payload.Username,
+			Password:    payload.Password,
+			APIKey:      payload.APIKey,
+			APIKeyValue: payload.APIKeyValue,
+			APIKeyIn:    payload.APIKeyIn,
+		})
+		writeJSON(w, val, err)
+	}))
 
-	// GraphQL request sub-routes (must come before generic request handlers)
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/requests/") && strings.HasSuffix(r.URL.Path, "/execute-graphql"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/requests/"), "/execute-graphql")
-		data, err := appInstance.ExecuteGraphQLRequest(id)
-		writeJSON(w, data, err)
-		return
+	mux.HandleFunc("POST /api/requests/{id}/duplicate", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.DuplicateRequest(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
 
-	case r.Method == http.MethodGet && r.URL.Path == "/api/requests/search":
-		data, err := appInstance.SearchRequests(r.URL.Query().Get("q"))
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/requests/") && !strings.Contains(r.URL.Path[13:], "/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/requests/")
-		data, err := appInstance.GetRequest(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/environments":
-		data, err := appInstance.GetEnvironments()
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/environments":
+	mux.HandleFunc("POST /api/requests/{id}/execute-graphql", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.ExecuteGraphQLRequest(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── Environments ─────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/environments", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetEnvironments()
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/environments", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
-			Name      string                 `json:"name"`
-			Variables map[string]interface{} `json:"variables"`
+			Name      string         `json:"name"`
+			Variables map[string]any `json:"variables"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.CreateEnvironment(payload.Name, payload.Variables)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/environments/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/environments/")
-		data, err := appInstance.DeleteEnvironment(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/environments/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/environments/")
+		val, err := appInstance.CreateEnvironment(payload.Name, payload.Variables)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("DELETE /api/environments/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.DeleteEnvironment(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/environments/{id}", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
-			Name      string                 `json:"name"`
-			Variables map[string]interface{} `json:"variables"`
+			Name      string         `json:"name"`
+			Variables map[string]any `json:"variables"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.UpdateEnvironment(id, payload.Name, payload.Variables)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/history":
-		data, err := appInstance.GetHistory()
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/history/") && strings.HasSuffix(r.URL.Path, "/replay"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/history/"), "/replay")
-		data, err := appInstance.ReplayHistoryEntry(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/user-config":
-		data, err := appInstance.GetUserConfig()
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPut && r.URL.Path == "/api/user-config":
+		val, err := appInstance.UpdateEnvironment(r.PathValue("id"), payload.Name, payload.Variables)
+		writeJSON(w, val, err)
+	}))
+
+	// ── History ──────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/history", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetHistory()
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/history/{id}/replay", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.ReplayHistoryEntry(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── User Config ──────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/user-config", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetUserConfig()
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/user-config", h(func(w http.ResponseWriter, r *http.Request) {
 		var cfg models.UserConfig
 		if err := decodeJSON(r, &cfg); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.SaveUserConfig(&cfg)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/runs/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/runs/")
-		data, err := appInstance.GetRunHistory(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/export-content":
-		data, err := appInstance.ExportSnapshot()
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/import-content":
+		val, err := appInstance.SaveUserConfig(&cfg)
+		writeJSON(w, val, err)
+	}))
+
+	// ── Runs ─────────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/runs/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetRunHistory(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── Export / Import ──────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/export-content", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.ExportSnapshot()
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/import-content", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Data models.ExportData `json:"data"`
 			Mode string            `json:"mode"`
@@ -400,11 +480,13 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		switch payload.Mode {
 		case "replace", "":
-			writeJSON(w, map[string]bool{"ok": true}, appInstance.ImportSnapshot(payload.Data))
+			err := appInstance.ImportSnapshot(payload.Data)
+			writeJSON(w, map[string]bool{"ok": err == nil}, err)
 		case "merge":
-			writeJSON(w, map[string]bool{"ok": true}, appInstance.MergeSnapshot(payload.Data))
+			err := appInstance.MergeSnapshot(payload.Data)
+			writeJSON(w, map[string]bool{"ok": err == nil}, err)
 		case "preview":
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"ok":           true,
 				"collections":  len(payload.Data.Collections),
 				"requests":     len(payload.Data.Requests),
@@ -412,23 +494,24 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 				"history":      len(payload.Data.History),
 			}, nil)
 		default:
-			writeJSON(w, nil, errInvalidMode(payload.Mode))
+			writeJSON(w, nil, fmt.Errorf("unsupported import mode: %s", payload.Mode))
 		}
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/collections/") && strings.HasSuffix(r.URL.Path, "/reveal"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/collections/"), "/reveal")
-		err := appInstance.RevealInFinder(id)
-		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/storage-info":
-		writeJSON(w, appInstance.GetStorageInfo(), nil)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/term-port":
-		writeJSON(w, map[string]int{"port": appInstance.GetTerminalPort()}, nil)
-		return
+	}))
 
-	// GraphQL introspection
-	case r.Method == http.MethodPost && r.URL.Path == "/api/graphql/introspect":
+	// ── Misc ─────────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/storage-info", h(func(w http.ResponseWriter, r *http.Request) {
+		val := appInstance.GetStorageInfo()
+		writeJSON(w, val, nil)
+	}))
+
+	mux.HandleFunc("GET /api/term-port", h(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]int{"port": appInstance.GetTerminalPort()}, nil)
+	}))
+
+	// ── GraphQL Introspection ────────────────────────────────────
+
+	mux.HandleFunc("POST /api/graphql/introspect", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			URL string `json:"url"`
 		}
@@ -436,26 +519,28 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.IntrospectGraphQLSchema(payload.URL)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/graphql/schema":
-		data, err := appInstance.GetCachedGraphQLSchema(r.URL.Query().Get("url"))
-		writeJSON(w, data, err)
-		return
+		val, err := appInstance.IntrospectGraphQLSchema(payload.URL)
+		writeJSON(w, val, err)
+	}))
 
-	// Git
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/init"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/init")
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.GitInit(id))
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/status"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/status")
-		data, err := appInstance.GitStatus(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/commit"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/commit")
+	mux.HandleFunc("GET /api/graphql/schema", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetCachedGraphQLSchema(r.URL.Query().Get("url"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── Git ──────────────────────────────────────────────────────
+
+	mux.HandleFunc("POST /api/git/{id}/init", h(func(w http.ResponseWriter, r *http.Request) {
+		err := appInstance.GitInit(r.PathValue("id"))
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+	}))
+
+	mux.HandleFunc("GET /api/git/{id}/status", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GitStatus(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/git/{id}/commit", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Message string `json:"message"`
 		}
@@ -463,16 +548,18 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		writeJSON(w, map[string]bool{"ok": true}, appInstance.GitCommit(id, payload.Message))
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/git/") && strings.HasSuffix(r.URL.Path, "/log"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/git/"), "/log")
-		data, err := appInstance.GitLog(id)
-		writeJSON(w, data, err)
-		return
+		err := appInstance.GitCommit(r.PathValue("id"), payload.Message)
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+	}))
 
-	// WebSocket operations
-	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/connect":
+	mux.HandleFunc("GET /api/git/{id}/log", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GitLog(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── WebSocket ────────────────────────────────────────────────
+
+	mux.HandleFunc("POST /api/ws/connect", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			RequestID string            `json:"requestId"`
 			URL       string            `json:"url"`
@@ -482,10 +569,11 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.ConnectWebSocket(payload.RequestID, payload.URL, payload.Headers)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/disconnect":
+		val, err := appInstance.ConnectWebSocket(payload.RequestID, payload.URL, payload.Headers)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/ws/disconnect", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			ConnID string `json:"connId"`
 		}
@@ -495,8 +583,9 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		err := appInstance.DisconnectWebSocket(payload.ConnID)
 		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/ws/send":
+	}))
+
+	mux.HandleFunc("POST /api/ws/send", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			ConnID  string `json:"connId"`
 			Message string `json:"message"`
@@ -507,25 +596,26 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		err := appInstance.SendWebSocketMessage(payload.ConnID, payload.Message)
 		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/messages":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetWebSocketMessages(connID)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/messages/all":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetAllWebSocketMessages(connID)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/ws/status":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetWebSocketStatus(connID)
-		writeJSON(w, data, err)
-		return
+	}))
 
-	// SSE operations
-	case r.Method == http.MethodPost && r.URL.Path == "/api/sse/connect":
+	mux.HandleFunc("GET /api/ws/messages", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetWebSocketMessages(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/ws/messages/all", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetAllWebSocketMessages(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/ws/status", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetWebSocketStatus(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── SSE ──────────────────────────────────────────────────────
+
+	mux.HandleFunc("POST /api/sse/connect", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			RequestID string            `json:"requestId"`
 			URL       string            `json:"url"`
@@ -535,10 +625,11 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.ConnectSSE(payload.RequestID, payload.URL, payload.Headers)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/sse/disconnect":
+		val, err := appInstance.ConnectSSE(payload.RequestID, payload.URL, payload.Headers)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/sse/disconnect", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			ConnID string `json:"connId"`
 		}
@@ -548,31 +639,31 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		err := appInstance.DisconnectSSE(payload.ConnID)
 		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/events":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetSSEEvents(connID)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/events/all":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetAllSSEEvents(connID)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/sse/status":
-		connID := r.URL.Query().Get("connId")
-		data, err := appInstance.GetSSEStatus(connID)
-		writeJSON(w, data, err)
-		return
+	}))
 
-	// Scripting operations
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/get"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/get")
-		data, err := appInstance.GetRequestScripts(id)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/set"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/set")
+	mux.HandleFunc("GET /api/sse/events", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetSSEEvents(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/sse/events/all", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetAllSSEEvents(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/sse/status", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetSSEStatus(r.URL.Query().Get("connId"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── Scripts ──────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /api/scripts/{id}/get", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.GetRequestScripts(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("PUT /api/scripts/{id}/set", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			PreRequestScript string `json:"preRequestScript"`
 			TestScript       string `json:"testScript"`
@@ -581,11 +672,11 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.SetRequestScripts(id, payload.PreRequestScript, payload.TestScript)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/pre-request"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/pre-request")
+		val, err := appInstance.SetRequestScripts(r.PathValue("id"), payload.PreRequestScript, payload.TestScript)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/scripts/{id}/pre-request", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Script string `json:"script"`
 		}
@@ -593,25 +684,26 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		data, err := appInstance.RunPreRequestScript(id, payload.Script)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/scripts/") && strings.HasSuffix(r.URL.Path, "/test"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scripts/"), "/test")
+		val, err := appInstance.RunPreRequestScript(r.PathValue("id"), payload.Script)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/scripts/{id}/test", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
-			Script   string                 `json:"script"`
-			Response map[string]interface{} `json:"response"`
+			Script   string         `json:"script"`
+			Response map[string]any `json:"response"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		data := appInstance.RunTestScript(id, payload.Script, payload.Response)
-		writeJSON(w, data, nil)
-		return
+		val := appInstance.RunTestScript(r.PathValue("id"), payload.Script, payload.Response)
+		writeJSON(w, val, nil)
+	}))
 
-	// Mock server operations
-	case r.Method == http.MethodPost && r.URL.Path == "/api/mock/start":
+	// ── Mock Server ──────────────────────────────────────────────
+
+	mux.HandleFunc("POST /api/mock/start", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Port int `json:"port"`
 		}
@@ -624,24 +716,29 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		}
 		err := appInstance.StartMockServer(payload.Port)
 		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodPost && r.URL.Path == "/api/mock/stop":
+	}))
+
+	mux.HandleFunc("POST /api/mock/stop", h(func(w http.ResponseWriter, r *http.Request) {
 		err := appInstance.StopMockServer()
 		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/mock/status":
-		data := appInstance.GetMockStatus()
-		writeJSON(w, data, nil)
-		return
-	case r.Method == http.MethodGet && r.URL.Path == "/api/mock/log":
-		writeJSON(w, appInstance.GetMockLog(), nil)
-		return
-	case r.Method == http.MethodDelete && r.URL.Path == "/api/mock/log":
+	}))
+
+	mux.HandleFunc("GET /api/mock/status", h(func(w http.ResponseWriter, r *http.Request) {
+		val := appInstance.GetMockStatus()
+		writeJSON(w, val, nil)
+	}))
+
+	mux.HandleFunc("GET /api/mock/log", h(func(w http.ResponseWriter, r *http.Request) {
+		val := appInstance.GetMockLog()
+		writeJSON(w, val, nil)
+	}))
+
+	mux.HandleFunc("DELETE /api/mock/log", h(func(w http.ResponseWriter, r *http.Request) {
 		appInstance.ClearMockLog()
 		writeJSON(w, map[string]bool{"ok": true}, nil)
-		return
-	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/mock/config") && strings.HasSuffix(r.URL.Path, "/set"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mock/config/"), "/set")
+	}))
+
+	mux.HandleFunc("POST /api/mock/config/{id}/set", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			StatusCode int               `json:"statusCode"`
 			Headers    map[string]string `json:"headers"`
@@ -656,27 +753,31 @@ func handleAPI(appInstance *app.App, w http.ResponseWriter, r *http.Request) {
 		if payload.StatusCode == 0 {
 			payload.StatusCode = 200
 		}
-		data, err := appInstance.SetMockConfig(id, payload.StatusCode, payload.Headers, payload.Body, payload.LatencyMs, payload.Enabled)
-		writeJSON(w, data, err)
-		return
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/mock/config/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/mock/config/")
-		err := appInstance.RemoveMockConfig(id)
-		writeJSON(w, map[string]bool{"ok": err == nil}, err)
-		return
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/mock/configs/") && strings.HasSuffix(r.URL.Path, "/list"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/mock/configs/"), "/list")
-		data, err := appInstance.LoadMockConfigs(id)
-		writeJSON(w, data, err)
-		return
+		val, err := appInstance.SetMockConfig(r.PathValue("id"), payload.StatusCode, payload.Headers, payload.Body, payload.LatencyMs, payload.Enabled)
+		writeJSON(w, val, err)
+	}))
 
-	default:
+	mux.HandleFunc("DELETE /api/mock/config/{id}", h(func(w http.ResponseWriter, r *http.Request) {
+		err := appInstance.RemoveMockConfig(r.PathValue("id"))
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+	}))
+
+	mux.HandleFunc("GET /api/mock/configs/{id}/list", h(func(w http.ResponseWriter, r *http.Request) {
+		val, err := appInstance.LoadMockConfigs(r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// ── Catch-all: unmatched /api/ routes ────────────────────────
+
+	mux.HandleFunc("/api/", h(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-	}
+	}))
+
+	return mux
 }
 
-func decodeJSON(r *http.Request, target interface{}) error {
+func decodeJSON(r *http.Request, target any) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -687,15 +788,15 @@ func decodeJSON(r *http.Request, target interface{}) error {
 	return json.Unmarshal(body, target)
 }
 
-func writeJSON(w http.ResponseWriter, data interface{}, err error) {
+func writeJSON(w http.ResponseWriter, data any, err error) {
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		code := http.StatusBadRequest
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			code = http.StatusNotFound
+		}
+		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	_ = json.NewEncoder(w).Encode(data)
-}
-
-func errInvalidMode(mode string) error {
-	return fmt.Errorf("unsupported import mode: %s", mode)
 }

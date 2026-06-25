@@ -67,16 +67,22 @@ func InitRepo(collectionDir string) error {
 
 	// Create initial commit if this is a fresh repo
 	if isNew {
-		repo, _ := git.PlainOpen(collectionDir)
-		if repo != nil {
-			wt, _ := repo.Worktree()
-			if wt != nil {
-				wt.AddWithOptions(&git.AddOptions{All: true})
-				wt.Commit("Initial commit — GoPost collection", &git.CommitOptions{
-					Author: &object.Signature{Name: "GoPost", Email: "gopost@local", When: time.Now()},
-				})
-			}
+		repo, err := git.PlainOpen(collectionDir)
+		if err != nil {
+			return fmt.Errorf("git init: open after init: %w", err)
 		}
+		wt, err := repo.Worktree()
+		if err != nil {
+			return fmt.Errorf("git init: worktree: %w", err)
+		}
+		if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+			return fmt.Errorf("git init: add: %w", err)
+		}
+		// Commit may fail if nothing is staged (e.g. empty repo with .gitignore
+		// that excludes everything). This is non-fatal — the repo is ready.
+		_, _ = wt.Commit("Initial commit — GoPost collection", &git.CommitOptions{
+			Author: &object.Signature{Name: "GoPost", Email: "gopost@local", When: time.Now()},
+		})
 	}
 
 	return nil

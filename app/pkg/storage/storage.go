@@ -19,7 +19,7 @@ type Storage struct {
 // New creates a new storage instance
 func New(dataDir string) *Storage {
 	// Ensure data directory exists
-	os.MkdirAll(dataDir, 0755)
+	_ = os.MkdirAll(dataDir, 0755) // non-fatal; directory may already exist
 	return &Storage{dataDir: dataDir}
 }
 
@@ -69,7 +69,7 @@ func (s *Storage) GetCollection(id string) (*models.Collection, error) {
 			return &c, nil
 		}
 	}
-	return nil, fmt.Errorf("collection not found")
+	return nil, fmt.Errorf("storage: collection not found")
 }
 
 func (s *Storage) DeleteCollection(id string) error {
@@ -162,7 +162,7 @@ func (s *Storage) GetRequest(id string) (*models.HTTPRequest, error) {
 			return &r, nil
 		}
 	}
-	return nil, fmt.Errorf("request not found")
+	return nil, fmt.Errorf("storage: request not found")
 }
 
 func (s *Storage) DeleteRequest(id string) error {
@@ -235,7 +235,7 @@ func (s *Storage) GetEnvironment(id string) (*models.Environment, error) {
 			return &e, nil
 		}
 	}
-	return nil, fmt.Errorf("environment not found")
+	return nil, fmt.Errorf("storage: environment not found")
 }
 
 func (s *Storage) DeleteEnvironment(id string) error {

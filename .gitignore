@@ -53,4 +53,10 @@ build/linux/icon.png
 # Generated Windows resource (from goversioninfo)
 *.syso
 
+#App personal stuff
 /plans
+/screenshots
+
+#Skills
+/agent
+/data

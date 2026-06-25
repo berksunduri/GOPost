@@ -27,55 +27,144 @@ import (
 	"gopost/app/pkg/parser"
 	"gopost/app/pkg/scripting"
 	"gopost/app/pkg/sse"
-	"gopost/app/pkg/storage"
 	"gopost/app/pkg/websocket"
 )
 
+// Store is the data persistence interface used by App.
+type Store interface {
+	// Collections
+	GetCollections() ([]models.Collection, error)
+	GetCollection(id string) (*models.Collection, error)
+	SaveCollection(c *models.Collection) error
+	DeleteCollection(id string) error
+	GetCollectionDir(id string) string
+
+	// Requests
+	GetRequests(collectionID string) ([]models.HTTPRequest, error)
+	GetAllRequests() ([]models.HTTPRequest, error)
+	GetRequest(id string) (*models.HTTPRequest, error)
+	SaveRequest(req *models.HTTPRequest) error
+	DeleteRequest(id string) error
+	DeleteRequestFromCollection(requestID, collectionID string) error
+
+	// Environments
+	GetEnvironments() ([]models.Environment, error)
+	GetEnvironment(id string) (*models.Environment, error)
+	SaveEnvironment(env *models.Environment) error
+	DeleteEnvironment(id string) error
+
+	// History
+	GetHistory() ([]models.HistoryEntry, error)
+	SaveHistoryEntry(entry *models.HistoryEntry) error
+	DeleteHistoryEntriesForCollection(collectionID string) error
+
+	// Import/Export
+	ReplaceAllData(data *models.ExportData) error
+
+	// User Config
+	GetUserConfig() (*models.UserConfig, error)
+	SaveUserConfig(cfg *models.UserConfig) error
+
+	// Run Reports
+	SaveRunReport(collectionID string, summary map[string]any) error
+	GetRunHistory(collectionID string) ([]map[string]any, error)
+
+	// Mock Configs
+	SaveMockConfig(mc *models.MockConfig) error
+	GetMockConfigs(collectionID string) ([]models.MockConfig, error)
+	DeleteMockConfig(collectionID, requestID string) error
+
+	// Info
+	GetBaseDir() string
+}
+
+// CreateRequestParams holds parameters for App.CreateRequest.
+type CreateRequestParams struct {
+	CollectionID string
+	Name         string
+	Method       string
+	URL          string
+	Headers      map[string]string
+	Body         string
+	Description  string
+}
+
+// UpdateRequestParams holds parameters for App.UpdateRequest and App.UpdateRequestWithGraphQL.
+type UpdateRequestParams struct {
+	Name        string
+	Method      string
+	URL         string
+	Headers     map[string]string
+	Body        string
+	Description string
+	GraphQL     *UpdateGraphQLParams
+}
+
+// UpdateGraphQLParams holds GraphQL-specific parameters for update operations.
+type UpdateGraphQLParams struct {
+	Query         string
+	Variables     string
+	OperationName string
+	SchemaURL     string
+}
+
+// SetRequestAuthParams holds parameters for App.SetRequestAuth.
+type SetRequestAuthParams struct {
+	AuthType    string
+	Token       string
+	Username    string
+	Password    string
+	APIKey      string
+	APIKeyValue string
+	APIKeyIn    string
+}
+
+// ExecuteRequestParams holds parameters for App.ExecuteRequest.
+type ExecuteRequestParams struct {
+	EnvVars map[string]string
+}
+
+// schemaStore holds the GraphQL schema cache and its lock.
+type schemaStore struct {
+	mu    sync.RWMutex
+	cache map[string]*models.CachedGraphQLSchema
+}
+
+// connStore manages WebSocket and SSE client connections.
+type connStore struct {
+	wsClients   map[string]*websocket.Client
+	wsClientsMu sync.Mutex
+
+	sseClients   map[string]*sse.Client
+	sseClientsMu sync.Mutex
+}
+
 // App struct
 type App struct {
-	ctx           context.Context
-	git           *storage.GitStore // Git-friendly storage
-	termPort      int               // Port for terminal WebSocket server
-	scriptEngine  *scripting.Engine // Starlark scripting engine
-	httpClient    *http.Client      // Shared HTTP client with connection pooling
-	mockServer    *mock.Server      // Built-in mock server
-	schemaCacheMu sync.RWMutex
-	schemaCache   map[string]*models.CachedGraphQLSchema // URL → cached schema
-
-	wsClientsMu sync.Mutex
-	wsClients   map[string]*websocket.Client // connID → active WS client
-
-	sseClientsMu sync.Mutex
-	sseClients   map[string]*sse.Client // connID → active SSE client
+	ctx          context.Context
+	git          Store
+	termPort     int
+	scriptEngine *scripting.Engine
+	httpClient   *http.Client
+	mockServer   *mock.Server
+	schema       schemaStore
+	conns        connStore
 }
 
 // NewApp creates a new App application struct.
-// Automatically migrates legacy data to Git-friendly format on first run.
-func NewApp(dataDir string) *App {
-	// Run migration from legacy JSON blobs to per-file GitStore
-	migrated, err := storage.MigrateFromLegacy(dataDir)
-	if err != nil {
-		slog.Warn("migration warning", "error", err)
-	}
-	if migrated {
-		slog.Info("data migrated to Git-friendly format")
-		slog.Info("old files backed up as .legacy.bak")
-	}
-
-	gitStore, err := storage.NewGitStore(dataDir)
-	if err != nil {
-		slog.Error("failed to initialize storage", "error", err)
-		// Continue with minimal app — storage will be unavailable.
-	}
-
+func NewApp(store Store) *App {
 	return &App{
-		git:          gitStore,
-		scriptEngine: scripting.NewEngine(), // Starlark scripting engine
-		httpClient:   newSharedHTTPClient(), // Pooled HTTP client
-		mockServer:   mock.NewServer(),      // Built-in mock server
-		schemaCache:  make(map[string]*models.CachedGraphQLSchema),
-		wsClients:    make(map[string]*websocket.Client),
-		sseClients:   make(map[string]*sse.Client),
+		git:          store,
+		scriptEngine: scripting.NewEngine(),
+		httpClient:   newSharedHTTPClient(),
+		mockServer:   mock.NewServer(),
+		schema: schemaStore{
+			cache: make(map[string]*models.CachedGraphQLSchema),
+		},
+		conns: connStore{
+			wsClients:  make(map[string]*websocket.Client),
+			sseClients: make(map[string]*sse.Client),
+		},
 	}
 }
 
@@ -169,21 +258,21 @@ func (a *App) GetRequestsForCollection(collectionID string) ([]models.HTTPReques
 }
 
 // CreateRequest creates a new HTTP request
-func (a *App) CreateRequest(collectionID string, name string, method string, url string, headers map[string]string, body string, description string) (*models.HTTPRequest, error) {
-	if headers == nil {
-		headers = make(map[string]string)
+func (a *App) CreateRequest(p CreateRequestParams) (*models.HTTPRequest, error) {
+	if p.Headers == nil {
+		p.Headers = make(map[string]string)
 	}
 
 	request := &models.HTTPRequest{
 		ID:           uuid.New().String(),
-		Name:         name,
-		Method:       method,
-		URL:          url,
-		Headers:      headers,
+		Name:         p.Name,
+		Method:       p.Method,
+		URL:          p.URL,
+		Headers:      p.Headers,
 		Auth:         models.RequestAuth{Type: "none"},
-		Body:         body,
-		Description:  description,
-		CollectionID: collectionID,
+		Body:         p.Body,
+		Description:  p.Description,
+		CollectionID: p.CollectionID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -247,18 +336,18 @@ func (a *App) SearchRequests(query string) ([]models.HTTPRequest, error) {
 }
 
 // UpdateRequest updates an existing request
-func (a *App) UpdateRequest(id string, name string, method string, url string, headers map[string]string, body string, description string) (*models.HTTPRequest, error) {
+func (a *App) UpdateRequest(id string, p UpdateRequestParams) (*models.HTTPRequest, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
 
-	request.Name = name
-	request.Method = method
-	request.URL = url
-	request.Headers = headers
-	request.Body = body
-	request.Description = description
+	request.Name = p.Name
+	request.Method = p.Method
+	request.URL = p.URL
+	request.Headers = p.Headers
+	request.Body = p.Body
+	request.Description = p.Description
 	request.UpdatedAt = time.Now()
 
 	err = a.git.SaveRequest(request)
@@ -269,19 +358,19 @@ func (a *App) UpdateRequest(id string, name string, method string, url string, h
 	return request, nil
 }
 
-func (a *App) SetRequestAuth(id string, authType string, token string, username string, password string, apiKey string, apiKeyValue string, apiKeyIn string) (*models.HTTPRequest, error) {
+func (a *App) SetRequestAuth(id string, p SetRequestAuthParams) (*models.HTTPRequest, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
 	request.Auth = models.RequestAuth{
-		Type:        authType,
-		Token:       token,
-		Username:    username,
-		Password:    password,
-		APIKey:      apiKey,
-		APIKeyValue: apiKeyValue,
-		APIKeyIn:    apiKeyIn,
+		Type:        p.AuthType,
+		Token:       p.Token,
+		Username:    p.Username,
+		Password:    p.Password,
+		APIKey:      p.APIKey,
+		APIKeyValue: p.APIKeyValue,
+		APIKeyIn:    p.APIKeyIn,
 	}
 	request.UpdatedAt = time.Now()
 	if err := a.git.SaveRequest(request); err != nil {
@@ -298,7 +387,7 @@ func (a *App) DeleteRequest(id string) (map[string]bool, error) {
 
 // ExecuteRequest executes an HTTP request and returns the response.
 // Runs pre-request scripts before sending and test scripts after receiving.
-func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]interface{}, error) {
+func (a *App) ExecuteRequest(id string, p ExecuteRequestParams) (map[string]interface{}, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
@@ -306,18 +395,18 @@ func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]i
 
 	// Apply environment variable substitution to URL, body, and headers.
 	// This is the single source of truth — the frontend saves raw templates.
-	if len(envVars) > 0 {
-		request.URL = substituteVars(request.URL, envVars)
-		request.Body = substituteVars(request.Body, envVars)
+	if len(p.EnvVars) > 0 {
+		request.URL = substituteVars(request.URL, p.EnvVars)
+		request.Body = substituteVars(request.Body, p.EnvVars)
 		substitutedHeaders := make(map[string]string, len(request.Headers))
 		for k, v := range request.Headers {
-			substitutedHeaders[substituteVars(k, envVars)] = substituteVars(v, envVars)
+			substitutedHeaders[substituteVars(k, p.EnvVars)] = substituteVars(v, p.EnvVars)
 		}
 		request.Headers = substitutedHeaders
 	}
 
 	// Script env is mainly for chaining between pre-request and test scripts.
-	env := envVars
+	env := p.EnvVars
 	if env == nil {
 		env = make(map[string]string)
 	}
@@ -326,11 +415,7 @@ func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]i
 	if request.PreRequestScript != "" {
 		modified, err := a.scriptEngine.PreRequestScript(request.PreRequestScript, request, env)
 		if err != nil {
-			return map[string]interface{}{
-				"error":         err.Error(),
-				"script_phase":  "pre-request",
-				"script_failed": true,
-			}, nil
+			return nil, fmt.Errorf("pre-request script: %w", err)
 		}
 		request = modified
 	}
@@ -382,7 +467,7 @@ func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]i
 		}
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"status":  resp.Status,
 		"code":    resp.StatusCode,
 		"headers": responseHeaders,
@@ -421,7 +506,7 @@ func (a *App) ExecuteRequest(id string, envVars map[string]string) (map[string]i
 	// Run test script
 	if request.TestScript != "" {
 		testResult := a.scriptEngine.TestScript(request.TestScript, request, result, env)
-		result["test_result"] = map[string]interface{}{
+		result["test_result"] = map[string]any{
 			"passed":      testResult.Passed,
 			"error":       testResult.Error,
 			"failures":    testResult.Failures,
@@ -500,10 +585,10 @@ func (a *App) GetUserConfig() (*models.UserConfig, error) {
 	return a.git.GetUserConfig()
 }
 
-// SaveUserConfig persists user preferences
-func (a *App) SaveUserConfig(cfg *models.UserConfig) (map[string]bool, error) {
+// SaveUserConfig persists user preferences and returns the saved config.
+func (a *App) SaveUserConfig(cfg *models.UserConfig) (*models.UserConfig, error) {
 	err := a.git.SaveUserConfig(cfg)
-	return map[string]bool{"ok": true}, err
+	return cfg, err
 }
 
 // GetRunHistory returns saved collection run reports
@@ -523,12 +608,28 @@ func (a *App) ReplayHistoryEntry(entryID string) (map[string]interface{}, error)
 	}
 	for _, entry := range history {
 		if entry.ID == entryID {
-			request, reqErr := a.CreateRequest(entry.CollectionID, entry.RequestName, entry.Method, entry.URL, entry.RequestHeaders, entry.RequestBody, "Replayed from history")
+			request, reqErr := a.CreateRequest(CreateRequestParams{
+				CollectionID: entry.CollectionID,
+				Name:         entry.RequestName,
+				Method:       entry.Method,
+				URL:          entry.URL,
+				Headers:      entry.RequestHeaders,
+				Body:         entry.RequestBody,
+				Description:  "Replayed from history",
+			})
 			if reqErr != nil {
 				return nil, reqErr
 			}
-			_, _ = a.SetRequestAuth(request.ID, entry.RequestAuth.Type, entry.RequestAuth.Token, entry.RequestAuth.Username, entry.RequestAuth.Password, entry.RequestAuth.APIKey, entry.RequestAuth.APIKeyValue, entry.RequestAuth.APIKeyIn)
-			return a.ExecuteRequest(request.ID, nil)
+			_, _ = a.SetRequestAuth(request.ID, SetRequestAuthParams{
+				AuthType:    entry.RequestAuth.Type,
+				Token:       entry.RequestAuth.Token,
+				Username:    entry.RequestAuth.Username,
+				Password:    entry.RequestAuth.Password,
+				APIKey:      entry.RequestAuth.APIKey,
+				APIKeyValue: entry.RequestAuth.APIKeyValue,
+				APIKeyIn:    entry.RequestAuth.APIKeyIn,
+			})
+			return a.ExecuteRequest(request.ID, ExecuteRequestParams{})
 		}
 	}
 	return nil, fmt.Errorf("history entry not found")
@@ -679,7 +780,14 @@ func (a *App) ImportHTTPContent(content string, collectionID string) (map[string
 		if name == "" {
 			name = pr.Method + " " + pr.URL
 		}
-		req, err := a.CreateRequest(collectionID, name, pr.Method, pr.URL, pr.Headers, pr.Body, "")
+		req, err := a.CreateRequest(CreateRequestParams{
+			CollectionID: collectionID,
+			Name:         name,
+			Method:       pr.Method,
+			URL:          pr.URL,
+			Headers:      pr.Headers,
+			Body:         pr.Body,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to import request %q: %w", name, err)
 		}
@@ -732,7 +840,10 @@ func (a *App) ExportCollectionAsHTTPFile(collectionID string) (map[string]interf
 		return nil, err
 	}
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("home directory: %w", err)
+	}
 	dir := filepath.Join(home, "Downloads")
 	os.MkdirAll(dir, 0700)
 
@@ -790,7 +901,7 @@ func (a *App) RunCollection(collectionID string, stopOnFail bool) (map[string]in
 	passed := 0
 	failed := 0
 	for _, request := range requests {
-		result, execErr := a.ExecuteRequest(request.ID, nil)
+		result, execErr := a.ExecuteRequest(request.ID, ExecuteRequestParams{})
 		item := map[string]interface{}{
 			"request_id":   request.ID,
 			"request_name": request.Name,
@@ -868,12 +979,12 @@ const graphQLIntrospectionQuery = `
 // IntrospectGraphQLSchema fetches and caches the GraphQL schema from the given endpoint.
 func (a *App) IntrospectGraphQLSchema(endpointURL string) (map[string]interface{}, error) {
 	// Check cache first
-	a.schemaCacheMu.RLock()
-	if cached, ok := a.schemaCache[endpointURL]; ok {
-		a.schemaCacheMu.RUnlock()
+	a.schema.mu.RLock()
+	if cached, ok := a.schema.cache[endpointURL]; ok {
+		a.schema.mu.RUnlock()
 		return cached.Schema, nil
 	}
-	a.schemaCacheMu.RUnlock()
+	a.schema.mu.RUnlock()
 
 	// Build introspection request
 	body := map[string]string{
@@ -913,34 +1024,34 @@ func (a *App) IntrospectGraphQLSchema(endpointURL string) (map[string]interface{
 	}
 
 	// Cache the schema (cap at 50 entries, evict oldest on overflow).
-	a.schemaCacheMu.Lock()
+	a.schema.mu.Lock()
 	const maxSchemaCache = 50
-	if len(a.schemaCache) >= maxSchemaCache {
+	if len(a.schema.cache) >= maxSchemaCache {
 		var oldestURL string
 		var oldestTime time.Time
-		for u, c := range a.schemaCache {
+		for u, c := range a.schema.cache {
 			if oldestURL == "" || c.IntrospectedAt.Before(oldestTime) {
 				oldestURL = u
 				oldestTime = c.IntrospectedAt
 			}
 		}
-		delete(a.schemaCache, oldestURL)
+		delete(a.schema.cache, oldestURL)
 	}
-	a.schemaCache[endpointURL] = &models.CachedGraphQLSchema{
+	a.schema.cache[endpointURL] = &models.CachedGraphQLSchema{
 		URL:            endpointURL,
 		Schema:         result,
 		IntrospectedAt: time.Now(),
 	}
-	a.schemaCacheMu.Unlock()
+	a.schema.mu.Unlock()
 
 	return result, nil
 }
 
 // GetCachedGraphQLSchema returns a previously introspected schema.
 func (a *App) GetCachedGraphQLSchema(url string) (map[string]interface{}, error) {
-	a.schemaCacheMu.RLock()
-	defer a.schemaCacheMu.RUnlock()
-	cached, ok := a.schemaCache[url]
+	a.schema.mu.RLock()
+	defer a.schema.mu.RUnlock()
+	cached, ok := a.schema.cache[url]
 	if !ok {
 		return nil, fmt.Errorf("no cached schema for %s — call IntrospectGraphQLSchema first", url)
 	}
@@ -1092,29 +1203,29 @@ func (a *App) SetRequestGraphQL(id, query, variables, operationName, schemaURL s
 }
 
 // UpdateRequestWithGraphQL updates a request including GraphQL fields.
-func (a *App) UpdateRequestWithGraphQL(id string, name string, method string, url string, headers map[string]string, body string, description string, graphqlQuery string, graphqlVariables string, graphqlOperationName string, graphqlSchemaURL string) (*models.HTTPRequest, error) {
+func (a *App) UpdateRequestWithGraphQL(id string, p UpdateRequestParams) (*models.HTTPRequest, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
 
-	request.Name = name
-	request.Method = method
-	request.URL = url
-	request.Headers = headers
-	request.Body = body
-	request.Description = description
+	request.Name = p.Name
+	request.Method = p.Method
+	request.URL = p.URL
+	request.Headers = p.Headers
+	request.Body = p.Body
+	request.Description = p.Description
 	request.UpdatedAt = time.Now()
 
-	if method == "GRAPHQL" && graphqlQuery != "" {
+	if p.Method == "GRAPHQL" && p.GraphQL != nil && p.GraphQL.Query != "" {
 		if request.GraphQL == nil {
 			request.GraphQL = &models.GraphQLPayload{}
 		}
-		request.GraphQL.Query = graphqlQuery
-		request.GraphQL.Variables = graphqlVariables
-		request.GraphQL.OperationName = graphqlOperationName
-		request.GraphQL.SchemaURL = graphqlSchemaURL
-	} else if method != "GRAPHQL" {
+		request.GraphQL.Query = p.GraphQL.Query
+		request.GraphQL.Variables = p.GraphQL.Variables
+		request.GraphQL.OperationName = p.GraphQL.OperationName
+		request.GraphQL.SchemaURL = p.GraphQL.SchemaURL
+	} else if p.Method != "GRAPHQL" {
 		request.GraphQL = nil
 	}
 
@@ -1137,9 +1248,9 @@ func (a *App) ConnectWebSocket(requestID, url string, headers map[string]string)
 		return nil, err
 	}
 
-	a.wsClientsMu.Lock()
-	a.wsClients[connID] = client
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Lock()
+	a.conns.wsClients[connID] = client
+	a.conns.wsClientsMu.Unlock()
 
 	// Save the WS request to the collection if requestID is provided
 	if requestID != "" {
@@ -1162,23 +1273,23 @@ func (a *App) ConnectWebSocket(requestID, url string, headers map[string]string)
 
 // DisconnectWebSocket closes an active WebSocket connection.
 func (a *App) DisconnectWebSocket(connID string) error {
-	a.wsClientsMu.Lock()
-	client, ok := a.wsClients[connID]
+	a.conns.wsClientsMu.Lock()
+	client, ok := a.conns.wsClients[connID]
 	if !ok {
-		a.wsClientsMu.Unlock()
+		a.conns.wsClientsMu.Unlock()
 		return fmt.Errorf("WebSocket connection %s not found", connID)
 	}
-	delete(a.wsClients, connID)
-	a.wsClientsMu.Unlock()
+	delete(a.conns.wsClients, connID)
+	a.conns.wsClientsMu.Unlock()
 
 	return client.Disconnect()
 }
 
 // SendWebSocketMessage sends a text message through an active WebSocket connection.
 func (a *App) SendWebSocketMessage(connID, message string) error {
-	a.wsClientsMu.Lock()
-	client, ok := a.wsClients[connID]
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Lock()
+	client, ok := a.conns.wsClients[connID]
+	a.conns.wsClientsMu.Unlock()
 
 	if !ok {
 		return fmt.Errorf("WebSocket connection %s not found", connID)
@@ -1188,9 +1299,9 @@ func (a *App) SendWebSocketMessage(connID, message string) error {
 
 // GetWebSocketMessages returns messages received since the last poll.
 func (a *App) GetWebSocketMessages(connID string) ([]websocket.Message, error) {
-	a.wsClientsMu.Lock()
-	client, ok := a.wsClients[connID]
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Lock()
+	client, ok := a.conns.wsClients[connID]
+	a.conns.wsClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
@@ -1200,9 +1311,9 @@ func (a *App) GetWebSocketMessages(connID string) ([]websocket.Message, error) {
 
 // GetAllWebSocketMessages returns the full message log for restoring state.
 func (a *App) GetAllWebSocketMessages(connID string) ([]websocket.Message, error) {
-	a.wsClientsMu.Lock()
-	client, ok := a.wsClients[connID]
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Lock()
+	client, ok := a.conns.wsClients[connID]
+	a.conns.wsClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
@@ -1212,9 +1323,9 @@ func (a *App) GetAllWebSocketMessages(connID string) ([]websocket.Message, error
 
 // GetWebSocketStatus returns the status of an active WebSocket connection.
 func (a *App) GetWebSocketStatus(connID string) (map[string]interface{}, error) {
-	a.wsClientsMu.Lock()
-	client, ok := a.wsClients[connID]
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Lock()
+	client, ok := a.conns.wsClients[connID]
+	a.conns.wsClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("WebSocket connection %s not found", connID)
@@ -1233,9 +1344,9 @@ func (a *App) ConnectSSE(requestID, url string, headers map[string]string) (map[
 		return nil, err
 	}
 
-	a.sseClientsMu.Lock()
-	a.sseClients[connID] = client
-	a.sseClientsMu.Unlock()
+	a.conns.sseClientsMu.Lock()
+	a.conns.sseClients[connID] = client
+	a.conns.sseClientsMu.Unlock()
 
 	// Save the SSE request to the collection if requestID is provided
 	if requestID != "" {
@@ -1258,23 +1369,23 @@ func (a *App) ConnectSSE(requestID, url string, headers map[string]string) (map[
 
 // DisconnectSSE closes an active SSE connection.
 func (a *App) DisconnectSSE(connID string) error {
-	a.sseClientsMu.Lock()
-	client, ok := a.sseClients[connID]
+	a.conns.sseClientsMu.Lock()
+	client, ok := a.conns.sseClients[connID]
 	if !ok {
-		a.sseClientsMu.Unlock()
+		a.conns.sseClientsMu.Unlock()
 		return fmt.Errorf("SSE connection %s not found", connID)
 	}
-	delete(a.sseClients, connID)
-	a.sseClientsMu.Unlock()
+	delete(a.conns.sseClients, connID)
+	a.conns.sseClientsMu.Unlock()
 
 	return client.Disconnect()
 }
 
 // GetSSEEvents returns SSE events received since the last poll.
 func (a *App) GetSSEEvents(connID string) ([]sse.Event, error) {
-	a.sseClientsMu.Lock()
-	client, ok := a.sseClients[connID]
-	a.sseClientsMu.Unlock()
+	a.conns.sseClientsMu.Lock()
+	client, ok := a.conns.sseClients[connID]
+	a.conns.sseClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("SSE connection %s not found", connID)
@@ -1284,9 +1395,9 @@ func (a *App) GetSSEEvents(connID string) ([]sse.Event, error) {
 
 // GetAllSSEEvents returns the full event log for restoring state.
 func (a *App) GetAllSSEEvents(connID string) ([]sse.Event, error) {
-	a.sseClientsMu.Lock()
-	client, ok := a.sseClients[connID]
-	a.sseClientsMu.Unlock()
+	a.conns.sseClientsMu.Lock()
+	client, ok := a.conns.sseClients[connID]
+	a.conns.sseClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("SSE connection %s not found", connID)
@@ -1296,9 +1407,9 @@ func (a *App) GetAllSSEEvents(connID string) ([]sse.Event, error) {
 
 // GetSSEStatus returns the status of an active SSE connection.
 func (a *App) GetSSEStatus(connID string) (map[string]interface{}, error) {
-	a.sseClientsMu.Lock()
-	client, ok := a.sseClients[connID]
-	a.sseClientsMu.Unlock()
+	a.conns.sseClientsMu.Lock()
+	client, ok := a.conns.sseClients[connID]
+	a.conns.sseClientsMu.Unlock()
 
 	if !ok {
 		return nil, fmt.Errorf("SSE connection %s not found", connID)
@@ -1347,8 +1458,11 @@ func (a *App) startTerminalServer() {
 	a.termPort = listener.Addr().(*net.TCPAddr).Port
 	slog.Info("terminal WebSocket server started", "port", a.termPort)
 
+	secret := MustGenerateTerminalSecret()
+	slog.Info("terminal secret generated")
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/terminal", HandleTerminalWS)
+	mux.HandleFunc("/terminal/"+secret, HandleTerminalWS)
 	http.Serve(listener, mux)
 }
 
@@ -1588,20 +1702,20 @@ func (a *App) Shutdown() {
 	_ = a.mockServer.Stop()
 
 	// Disconnect all active WebSocket clients
-	a.wsClientsMu.Lock()
-	for id, c := range a.wsClients {
+	a.conns.wsClientsMu.Lock()
+	for id, c := range a.conns.wsClients {
 		_ = c.Disconnect()
-		delete(a.wsClients, id)
+		delete(a.conns.wsClients, id)
 	}
-	a.wsClientsMu.Unlock()
+	a.conns.wsClientsMu.Unlock()
 
 	// Disconnect all active SSE clients
-	a.sseClientsMu.Lock()
-	for id, c := range a.sseClients {
+	a.conns.sseClientsMu.Lock()
+	for id, c := range a.conns.sseClients {
 		_ = c.Disconnect()
-		delete(a.sseClients, id)
+		delete(a.conns.sseClients, id)
 	}
-	a.sseClientsMu.Unlock()
+	a.conns.sseClientsMu.Unlock()
 }
 
 // SetMockConfig adds or updates a mock response configuration for a request.

@@ -39,6 +39,7 @@ func ParseHTTPFile(r io.Reader) ([]HTTPFileRequest, error) {
 	scanner := bufio.NewScanner(r)
 	var requests []HTTPFileRequest
 	var current *HTTPFileRequest
+	var bodyBuilder strings.Builder
 	inBody := false
 	lineNum := 0
 
@@ -50,8 +51,10 @@ func ParseHTTPFile(r io.Reader) ([]HTTPFileRequest, error) {
 		// Comment or request separator
 		if strings.HasPrefix(trimmed, "###") {
 			if current != nil {
+				current.Body = bodyBuilder.String()
 				requests = append(requests, *finalizeRequest(current))
 			}
+			bodyBuilder.Reset()
 			name := strings.TrimSpace(strings.TrimPrefix(trimmed, "###"))
 			current = &HTTPFileRequest{
 				Name:    name,
@@ -105,15 +108,16 @@ func ParseHTTPFile(r io.Reader) ([]HTTPFileRequest, error) {
 
 		// Body content
 		if current.Method != "" {
-			if current.Body != "" {
-				current.Body += "\n"
+			if bodyBuilder.Len() > 0 {
+				bodyBuilder.WriteByte('\n')
 			}
-			current.Body += line // Preserve original line including indentation
+			bodyBuilder.WriteString(line) // Preserve original line including indentation
 		}
 	}
 
 	// Add the last request
 	if current != nil {
+		current.Body = bodyBuilder.String()
 		requests = append(requests, *finalizeRequest(current))
 	}
 

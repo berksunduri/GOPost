@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"gopost/app/pkg/models"
+	"gopost/app/pkg/storage"
 )
 
 // newTestApp creates an App backed by a temporary directory.
 // No Wails context is needed for most business-logic methods.
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	return NewApp(t.TempDir())
+	store, _ := storage.NewGitStore(t.TempDir())
+	return NewApp(store)
 }
 
 // ==================== Collections ====================
@@ -104,7 +106,12 @@ func TestApp_CreateRequest(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
 
-	req, err := a.CreateRequest(col.ID, "Get Users", "GET", "https://example.com/users", nil, "", "")
+	req, err := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "Get Users",
+		Method:       "GET",
+		URL:          "https://example.com/users",
+	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -125,10 +132,21 @@ func TestApp_CreateRequest(t *testing.T) {
 func TestApp_UpdateRequest(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	req, _ := a.CreateRequest(col.ID, "Old", "GET", "https://old.com", nil, "", "")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "Old",
+		Method:       "GET",
+		URL:          "https://old.com",
+	})
 
-	updated, err := a.UpdateRequest(req.ID, "New", "POST", "https://new.com",
-		map[string]string{"X-Custom": "val"}, `{"key":"value"}`, "new desc")
+	updated, err := a.UpdateRequest(req.ID, UpdateRequestParams{
+		Name:        "New",
+		Method:      "POST",
+		URL:         "https://new.com",
+		Headers:     map[string]string{"X-Custom": "val"},
+		Body:        `{"key":"value"}`,
+		Description: "new desc",
+	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -149,7 +167,12 @@ func TestApp_UpdateRequest(t *testing.T) {
 func TestApp_DeleteRequest(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	req, _ := a.CreateRequest(col.ID, "ToDelete", "GET", "https://example.com", nil, "", "")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "ToDelete",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
 
 	result, err := a.DeleteRequest(req.ID)
 	if err != nil {
@@ -168,7 +191,12 @@ func TestApp_DeleteRequest(t *testing.T) {
 func TestApp_DuplicateRequest(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	req, _ := a.CreateRequest(col.ID, "Original", "GET", "https://example.com", nil, "", "")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "Original",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
 
 	dup, err := a.DuplicateRequest(req.ID)
 	if err != nil {
@@ -191,7 +219,12 @@ func TestApp_MoveRequest(t *testing.T) {
 	a := newTestApp(t)
 	src, _ := a.CreateCollection("Source")
 	dst, _ := a.CreateCollection("Destination")
-	req, _ := a.CreateRequest(src.ID, "Movable", "GET", "https://example.com", nil, "", "")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: src.ID,
+		Name:         "Movable",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
 
 	moved, err := a.MoveRequest(req.ID, dst.ID)
 	if err != nil {
@@ -214,8 +247,8 @@ func TestApp_MoveRequest(t *testing.T) {
 func TestApp_SearchRequests_EmptyQueryReturnsAll(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	a.CreateRequest(col.ID, "Alpha", "GET", "https://alpha.com", nil, "", "")
-	a.CreateRequest(col.ID, "Beta", "POST", "https://beta.com", nil, "", "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Alpha", Method: "GET", URL: "https://alpha.com"})
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Beta", Method: "POST", URL: "https://beta.com"})
 
 	results, err := a.SearchRequests("")
 	if err != nil {
@@ -229,8 +262,8 @@ func TestApp_SearchRequests_EmptyQueryReturnsAll(t *testing.T) {
 func TestApp_SearchRequests_FilterByName(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	a.CreateRequest(col.ID, "Get Users", "GET", "https://example.com/users", nil, "", "")
-	a.CreateRequest(col.ID, "Create Post", "POST", "https://example.com/posts", nil, "", "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Get Users", Method: "GET", URL: "https://example.com/users"})
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Create Post", Method: "POST", URL: "https://example.com/posts"})
 
 	results, _ := a.SearchRequests("user")
 	if len(results) != 1 || results[0].Name != "Get Users" {
@@ -241,8 +274,8 @@ func TestApp_SearchRequests_FilterByName(t *testing.T) {
 func TestApp_SearchRequests_FilterByURL(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	a.CreateRequest(col.ID, "Users", "GET", "https://api.example.com/users", nil, "", "")
-	a.CreateRequest(col.ID, "Posts", "GET", "https://api.example.com/posts", nil, "", "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Users", Method: "GET", URL: "https://api.example.com/users"})
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Posts", Method: "GET", URL: "https://api.example.com/posts"})
 
 	results, _ := a.SearchRequests("posts")
 	if len(results) != 1 || results[0].Name != "Posts" {
@@ -253,7 +286,7 @@ func TestApp_SearchRequests_FilterByURL(t *testing.T) {
 func TestApp_SearchRequests_CaseInsensitive(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	a.CreateRequest(col.ID, "GetUser", "GET", "https://example.com", nil, "", "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "GetUser", Method: "GET", URL: "https://example.com"})
 
 	results, _ := a.SearchRequests("GETUSER")
 	if len(results) != 1 {
@@ -264,9 +297,17 @@ func TestApp_SearchRequests_CaseInsensitive(t *testing.T) {
 func TestApp_SetRequestAuth_Bearer(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("API")
-	req, _ := a.CreateRequest(col.ID, "Secure", "GET", "https://example.com", nil, "", "")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "Secure",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
 
-	updated, err := a.SetRequestAuth(req.ID, "bearer", "mytoken", "", "", "", "", "")
+	updated, err := a.SetRequestAuth(req.ID, SetRequestAuthParams{
+		AuthType: "bearer",
+		Token:    "mytoken",
+	})
 	if err != nil {
 		t.Fatalf("set auth: %v", err)
 	}
@@ -332,9 +373,9 @@ func TestApp_DeleteEnvironment(t *testing.T) {
 func TestApp_ImportExportHTTPContent_Roundtrip(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("TestCollection")
-	a.CreateRequest(col.ID, "Get Root", "GET", "https://example.com/", map[string]string{"Accept": "application/json"}, "", "")
-	a.CreateRequest(col.ID, "Create Item", "POST", "https://example.com/items",
-		map[string]string{"Content-Type": "application/json"}, `{"name":"test"}`, "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Get Root", Method: "GET", URL: "https://example.com/", Headers: map[string]string{"Accept": "application/json"}})
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "Create Item", Method: "POST", URL: "https://example.com/items",
+		Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"name":"test"}`})
 
 	// Export
 	content, err := a.ExportCollectionAsHTTPContent(col.ID)
@@ -361,7 +402,7 @@ func TestApp_ImportExportHTTPContent_Roundtrip(t *testing.T) {
 func TestApp_ExportImportSnapshot_Roundtrip(t *testing.T) {
 	a := newTestApp(t)
 	col, _ := a.CreateCollection("SnapAPI")
-	a.CreateRequest(col.ID, "SnapRequest", "GET", "https://snap.example.com", nil, "", "")
+	a.CreateRequest(CreateRequestParams{CollectionID: col.ID, Name: "SnapRequest", Method: "GET", URL: "https://snap.example.com"})
 	a.CreateEnvironment("SnapEnv", map[string]interface{}{"k": "v"})
 
 	snapshot, err := a.ExportSnapshot()
@@ -405,8 +446,8 @@ func TestApp_SaveAndGetUserConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if !result["ok"] {
-		t.Error("save should return ok=true")
+	if result.ThemeID != "one-dark-pro" {
+		t.Errorf("saved theme: want 'one-dark-pro', got %q", result.ThemeID)
 	}
 
 	loaded, _ := a.GetUserConfig()
@@ -414,4 +455,3 @@ func TestApp_SaveAndGetUserConfig(t *testing.T) {
 		t.Errorf("loaded theme: want 'one-dark-pro', got %q", loaded.ThemeID)
 	}
 }
-

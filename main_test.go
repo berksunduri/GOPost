@@ -10,13 +10,16 @@ import (
 	"testing"
 
 	"gopost/app"
+	"gopost/app/pkg/storage"
 )
 
 func newTestHandler(t *testing.T) (*app.App, http.HandlerFunc) {
 	t.Helper()
-	a := app.NewApp(t.TempDir())
+	store, _ := storage.NewGitStore(t.TempDir())
+	a := app.NewApp(store)
+	apiMux := newAPIRouter(a)
 	return a, func(w http.ResponseWriter, r *http.Request) {
-		handleAPI(a, w, r)
+		apiMux.ServeHTTP(w, r)
 	}
 }
 

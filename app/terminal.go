@@ -93,16 +93,15 @@ func writeToPTY(tty *os.File, msg []byte) error {
 	return err
 }
 
-// terminalSecret is a per-process random token that must be present in the
-// WebSocket path to prevent cross-origin access from other browser tabs.
-var terminalSecret string
-
-func init() {
+// MustGenerateTerminalSecret returns a per-process random token that must be
+// present in the WebSocket path to prevent cross-origin access from other
+// browser tabs. It panics if the system's CSPRNG fails (catastrophic).
+func MustGenerateTerminalSecret() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	terminalSecret = hex.EncodeToString(b)
+	return hex.EncodeToString(b)
 }
 
 var upgrader = websocket.Upgrader{

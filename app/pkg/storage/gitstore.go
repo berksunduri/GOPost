@@ -416,6 +416,10 @@ func (g *GitStore) GetAllRequests() ([]models.HTTPRequest, error) {
 func (g *GitStore) SaveEnvironment(env *models.Environment) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.saveEnvironmentLocked(env)
+}
+
+func (g *GitStore) saveEnvironmentLocked(env *models.Environment) error {
 	envDir := filepath.Join(g.baseDir, "environments")
 	if err := os.MkdirAll(envDir, 0700); err != nil {
 		return err
@@ -589,7 +593,8 @@ func (g *GitStore) ReplaceAllData(data *models.ExportData) error {
 		return err
 	}
 	for _, env := range data.Environments {
-		g.SaveEnvironment(&env)
+		env := env
+		g.saveEnvironmentLocked(&env)
 	}
 
 	if err := os.MkdirAll(filepath.Join(g.baseDir, "history"), 0700); err != nil {
