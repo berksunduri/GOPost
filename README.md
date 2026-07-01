@@ -20,14 +20,16 @@ Built with Go, Wails, and React. Data is stored as JSON files on disk — no acc
 - Headers, body, auth (Bearer, Basic, API key)
 - Environments with `{{variable}}` substitution
 - Response viewer with JSON formatting, syntax highlighting, and inline search
-- Generate equivalent code in cURL, fetch, axios, Go, Python, or HTTPie
+- Generate equivalent code in cURL, fetch, axios, Go, Python, or HTTPie (toolbar dropdown)
+- Postman import — drag a Postman Collection v2.1 JSON export; folders flattened, auth extracted
+- OpenAPI / Swagger import — drag an OpenAPI 3.x or Swagger 2.0 JSON spec; all endpoints imported
+- Theme switching (dark, light, high contrast, dracula, fleafy) + custom color editor
 - GraphQL: query editor, variables, schema introspection
 - WebSocket and SSE support
 - Starlark scripting — pre-request and test scripts
 - Import/export `.http` files (curl paste too)
 - Collection runner with JUnit and JSON reporters (CI-friendly)
 - Keyboard shortcuts (rebindable in Settings)
-- Theme switching (dark, light, high contrast, dracula)
 
 ## Storage
 
