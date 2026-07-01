@@ -149,6 +149,23 @@ type App struct {
 	mockServer   *mock.Server
 	schema       schemaStore
 	conns        connStore
+
+	// onMockEvent is called with ("status" | "log", data) whenever the mock
+	// server state changes. Set from main.go to bridge into Wails events.
+	onMockEvent func(kind string, data any)
+}
+
+// SetMockEventCallback configures a callback for mock server status/log changes.
+// Called from main.go to bridge mock events into the Wails event bus.
+func (a *App) SetMockEventCallback(fn func(kind string, data any)) {
+	a.onMockEvent = fn
+	a.mockServer.OnActivity = a.handleMockActivity
+}
+
+func (a *App) handleMockActivity(kind string, data any) {
+	if a.onMockEvent != nil {
+		a.onMockEvent(kind, data)
+	}
 }
 
 // NewApp creates a new App application struct.
@@ -868,6 +885,202 @@ func (a *App) ExportCollectionAsHTTPFile(collectionID string) (map[string]interf
 	}, nil
 }
 
+// ==================== Postman Collection Import ====================
+
+// ImportPostmanCollection parses a Postman Collection v2.1 JSON export and
+// imports all requests into a new (or existing) GoPost collection.
+// Returns the collection and a summary of imported requests.
+func (a *App) ImportPostmanCollection(content string, collectionID string) (map[string]interface{}, error) {
+	coll, err := parser.ParsePostmanCollection([]byte(content))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Postman collection: %w", err)
+	}
+
+	requests := parser.FlattenRequests(coll)
+	if len(requests) == 0 {
+		return nil, fmt.Errorf("no requests found in Postman collection")
+	}
+
+	// Ensure the target collection exists
+	_, err = a.git.GetCollection(collectionID)
+	if err != nil {
+		return nil, fmt.Errorf("collection not found: %w", err)
+	}
+
+	imported := make([]map[string]interface{}, 0, len(requests))
+	for _, ir := range requests {
+		name := ir.Name
+		if name == "" {
+			name = ir.Method + " " + ir.URL
+		}
+
+		req, err := a.CreateRequest(CreateRequestParams{
+			CollectionID: collectionID,
+			Name:         name,
+			Method:       ir.Method,
+			URL:          ir.URL,
+			Headers:      ir.Headers,
+			Body:         ir.Body,
+			Description:  ir.Description,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to import request %q: %w", name, err)
+		}
+
+		// Apply auth if extracted from Postman
+		if ir.AuthType != "" {
+			authParams := SetRequestAuthParams{AuthType: ir.AuthType}
+			switch ir.AuthType {
+			case "bearer":
+				authParams.Token = ir.AuthToken
+			case "apikey":
+				authParams.APIKeyValue = ir.AuthToken
+			}
+			_, _ = a.SetRequestAuth(req.ID, authParams)
+		}
+
+		result := map[string]interface{}{
+			"id":     req.ID,
+			"name":   name,
+			"method": req.Method,
+			"url":    req.URL,
+		}
+		if ir.FolderPath != "" {
+			result["folder"] = ir.FolderPath
+		}
+		imported = append(imported, result)
+	}
+
+	return map[string]interface{}{
+		"collection_name": coll.Info.Name,
+		"count":           len(imported),
+		"requests":        imported,
+	}, nil
+}
+
+// ImportPostmanEnvironment parses a Postman environment JSON and creates a
+// GoPost environment with the same variables.
+func (a *App) ImportPostmanEnvironment(content string) (*models.Environment, error) {
+	env, err := parser.ParsePostmanEnvironment([]byte(content))
+	if err != nil {
+		return nil, err
+	}
+
+	variables := make(map[string]interface{})
+	for _, v := range env.Values {
+		if v.Enabled {
+			variables[v.Key] = v.Value
+		}
+	}
+
+	return a.CreateEnvironment(env.Name, variables)
+}
+
+// ==================== OpenAPI/Swagger Import ====================
+
+// ImportOpenAPISpec parses an OpenAPI 3.x or Swagger 2.0 JSON spec and
+// imports all endpoint operations as requests into a GoPost collection.
+func (a *App) ImportOpenAPISpec(content string, collectionID string) (map[string]interface{}, error) {
+	spec, err := parser.ParseOpenAPISpec([]byte(content))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse OpenAPI spec: %w", err)
+	}
+
+	requests := parser.ExtractOperations(spec)
+	if len(requests) == 0 {
+		return nil, fmt.Errorf("no operations found in OpenAPI spec")
+	}
+
+	// Ensure the target collection exists
+	_, err = a.git.GetCollection(collectionID)
+	if err != nil {
+		return nil, fmt.Errorf("collection not found: %w", err)
+	}
+
+	imported := make([]map[string]interface{}, 0, len(requests))
+	for _, ir := range requests {
+		name := ir.Name
+		if name == "" {
+			name = ir.Method + " " + ir.URL
+		}
+
+		req, err := a.CreateRequest(CreateRequestParams{
+			CollectionID: collectionID,
+			Name:         name,
+			Method:       ir.Method,
+			URL:          ir.URL,
+			Headers:      ir.Headers,
+			Body:         ir.Body,
+			Description:  ir.Description,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to import request %q: %w", name, err)
+		}
+
+		result := map[string]interface{}{
+			"id":     req.ID,
+			"name":   name,
+			"method": req.Method,
+			"url":    req.URL,
+		}
+		imported = append(imported, result)
+	}
+
+	specVersion := "OpenAPI " + spec.OpenAPI
+	if spec.Swagger != "" {
+		specVersion = "Swagger " + spec.Swagger
+	}
+
+	return map[string]interface{}{
+		"spec_title":   spec.Info.Title,
+		"spec_version": specVersion,
+		"count":        len(imported),
+		"requests":     imported,
+	}, nil
+}
+
+// ==================== Code Generation ====================
+
+// GenerateCode produces a code snippet for the given request in the target language.
+// Supported languages: curl, fetch, axios, go, python, httpie.
+func (a *App) GenerateCode(requestID string, language string) (map[string]interface{}, error) {
+	req, err := a.git.GetRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("request not found: %w", err)
+	}
+
+	lang := parser.CodeLanguage(language)
+	code, err := parser.GenerateCode(parser.CodeGenRequest{
+		Method:  req.Method,
+		URL:     req.URL,
+		Headers: req.Headers,
+		Body:    req.Body,
+	}, lang)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"language": language,
+		"label":    parser.LanguageLabel(lang),
+		"code":     code,
+	}, nil
+}
+
+// GetCodeLanguages returns the list of supported code generation languages
+// with their human-readable labels.
+func (a *App) GetCodeLanguages() []map[string]string {
+	langs := parser.AllLanguages()
+	result := make([]map[string]string, 0, len(langs))
+	for _, lang := range langs {
+		result = append(result, map[string]string{
+			"id":    string(lang),
+			"label": parser.LanguageLabel(lang),
+		})
+	}
+	return result
+}
+
 func (a *App) applyAuth(headers *map[string]string, auth models.RequestAuth, requestURL *url.URL) {
 	switch auth.Type {
 	case "bearer":
@@ -1484,10 +1697,24 @@ func substituteVars(s string, vars map[string]string) string {
 }
 
 // collectEnvVars gathers environment variables from the active environment.
-// Env vars are now passed directly to ExecuteRequest by the frontend. This
-// function is retained for script chaining scenarios.
+// Env vars are passed directly to ExecuteRequest by the frontend. This
+// function loads the "Script" environment for script chaining scenarios
+// where variables set by a pre-request script need to be available to the
+// test script (or vice versa).
 func (a *App) collectEnvVars() map[string]string {
 	env := make(map[string]string)
+	envs, err := a.git.GetEnvironments()
+	if err != nil {
+		return env
+	}
+	for _, e := range envs {
+		if e.Name == "Script" {
+			for k, v := range e.Variables {
+				env[k] = fmt.Sprintf("%v", v)
+			}
+			return env
+		}
+	}
 	return env
 }
 

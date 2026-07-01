@@ -284,6 +284,83 @@ function App() {
     if (!file) return;
     try {
       const raw = await file.text();
+
+      // Detect Postman files by JSON structure
+      if (raw.trim().startsWith("{")) {
+        let json;
+        try {
+          json = JSON.parse(raw);
+        } catch {
+          // Not valid JSON, continue to GoPost import
+        }
+
+        if (json) {
+          // Postman environment: has "name" and "values" keys, no "info"
+          if (json.name && Array.isArray(json.values) && !json.info) {
+            const env = await api.ImportPostmanEnvironment(raw);
+            await loadEnvironments();
+            toast.success(t("postmanEnvImportSuccess") + ": " + env.name);
+            return;
+          }
+
+          // Postman collection: has "info" with "schema" and "item" array
+          if (json.info && json.info.schema && Array.isArray(json.item)) {
+            let targetCollectionId = selectedCollection?.id;
+            if (!targetCollectionId) {
+              const colName =
+                json.info.name || file.name.replace(/\.json$/, "");
+              const col = await api.CreateCollection(colName);
+              targetCollectionId = col.id;
+              await loadCollections();
+            }
+            const result = await api.ImportPostmanCollection(
+              raw,
+              targetCollectionId,
+            );
+            const countMsg =
+              result.count +
+              " request" +
+              (result.count !== 1 ? "s" : "") +
+              " from " +
+              (json.info.name || file.name);
+            toast.success(t("postmanImportSuccess") + ": " + countMsg);
+            await loadRequests(targetCollectionId);
+            return;
+          }
+
+          // OpenAPI/Swagger spec: has "openapi" or "swagger" key and "paths" object
+          if (
+            (json.openapi || json.swagger) &&
+            json.paths &&
+            typeof json.paths === "object"
+          ) {
+            let targetCollectionId = selectedCollection?.id;
+            if (!targetCollectionId) {
+              const colName =
+                (json.info && json.info.title) ||
+                file.name.replace(/\.json$/, "");
+              const col = await api.CreateCollection(colName);
+              targetCollectionId = col.id;
+              await loadCollections();
+            }
+            const result = await api.ImportOpenAPISpec(raw, targetCollectionId);
+            const countMsg =
+              result.count +
+              " endpoint" +
+              (result.count !== 1 ? "s" : "") +
+              " from " +
+              (result.spec_title || file.name);
+            const label = json.swagger
+              ? t("swaggerImportSuccess")
+              : t("openapiImportSuccess");
+            toast.success(label + ": " + countMsg);
+            await loadRequests(targetCollectionId);
+            return;
+          }
+        }
+      }
+
+      // GoPost export format import
       const data = JSON.parse(raw);
       const result = await api.ImportDataContent(data, importModeState);
       if (importModeState === "preview") {
@@ -361,15 +438,16 @@ function App() {
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
 
-      const httpFiles = Array.from(files).filter(
+      const importableFiles = Array.from(files).filter(
         (f) =>
           f.name.endsWith(".http") ||
           f.name.endsWith(".rest") ||
-          f.name.endsWith(".gopost.json"),
+          f.name.endsWith(".gopost.json") ||
+          f.name.endsWith(".json"),
       );
-      if (httpFiles.length === 0) return;
+      if (importableFiles.length === 0) return;
 
-      for (const file of httpFiles) {
+      for (const file of importableFiles) {
         try {
           const content = await file.text();
 
@@ -388,6 +466,81 @@ function App() {
               toast.success(`Imported ${file.name}`);
             }
             continue;
+          }
+
+          // Detect Postman files by JSON structure
+          if (file.name.endsWith(".json") && content.trim().startsWith("{")) {
+            let json;
+            try {
+              json = JSON.parse(content);
+            } catch {
+              // Not valid JSON, fall through to .http import
+            }
+
+            if (json) {
+              // Postman environment
+              if (json.name && Array.isArray(json.values) && !json.info) {
+                const env = await api.ImportPostmanEnvironment(content);
+                toast.success(t("postmanEnvImportSuccess") + ": " + env.name);
+                await loadEnvironments();
+                continue;
+              }
+
+              // Postman collection
+              if (json.info && json.info.schema && Array.isArray(json.item)) {
+                let pmTargetId = selectedCollection?.id;
+                if (!pmTargetId) {
+                  const colName =
+                    json.info.name || file.name.replace(/\.json$/, "");
+                  const col = await api.CreateCollection(colName);
+                  pmTargetId = col.id;
+                  await loadCollections();
+                }
+                const result = await api.ImportPostmanCollection(
+                  content,
+                  pmTargetId,
+                );
+                const countMsg =
+                  result.count +
+                  " request" +
+                  (result.count !== 1 ? "s" : "") +
+                  " from " +
+                  (json.info.name || file.name);
+                toast.success(t("postmanImportSuccess") + ": " + countMsg);
+                await loadRequests(pmTargetId);
+                continue;
+              }
+
+              // OpenAPI/Swagger spec
+              if (
+                (json.openapi || json.swagger) &&
+                json.paths &&
+                typeof json.paths === "object"
+              ) {
+                let oaTargetId = selectedCollection?.id;
+                if (!oaTargetId) {
+                  const colName =
+                    (json.info && json.info.title) ||
+                    file.name.replace(/\.json$/, "");
+                  const col = await api.CreateCollection(colName);
+                  oaTargetId = col.id;
+                  await loadCollections();
+                }
+                const result = await api.ImportOpenAPISpec(content, oaTargetId);
+                const countMsg =
+                  result.count +
+                  " endpoint" +
+                  (result.count !== 1 ? "s" : "") +
+                  " from " +
+                  (result.spec_title || file.name);
+                const label = json.swagger
+                  ? t("swaggerImportSuccess")
+                  : t("openapiImportSuccess");
+                toast.success(label + ": " + countMsg);
+                await loadRequests(oaTargetId);
+                continue;
+              }
+            }
           }
 
           let targetCollectionId = selectedCollection?.id;
@@ -439,7 +592,8 @@ function App() {
               Drop .http file to import
             </p>
             <p className="text-sm text-muted-foreground">
-              Supports .http, .rest, and GoPost .json exports
+              Supports .http, .rest, .json (Postman, OpenAPI/Swagger), and
+              GoPost exports
             </p>
           </div>
         </div>

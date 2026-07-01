@@ -189,6 +189,12 @@ func sanitizeName(name string) string {
 	if cleaned == "" {
 		return "unnamed"
 	}
+	// Truncate to avoid filesystem filename length limits (255 bytes).
+	// Leave room for ".gopost.json" extension and potential ".tmp" suffix.
+	const maxLen = 200
+	if len(cleaned) > maxLen {
+		cleaned = cleaned[:maxLen]
+	}
 	return cleaned
 }
 

@@ -27,6 +27,11 @@ type Server struct {
 	logMu  sync.Mutex
 	log    []LogEntry
 	logCap int
+
+	// OnActivity is called (if non-nil) whenever the server state changes
+	// (handler added/removed, server started/stopped) or a log entry is recorded.
+	// It is called without holding any locks so callers can safely emit events.
+	OnActivity func(kind string, data any)
 }
 
 // entry is a handler plus its precomputed specificity score.
@@ -64,20 +69,24 @@ func NewServer() *Server {
 // so toggling enabled off takes effect on the running server immediately.
 func (s *Server) SetHandler(mc models.MockConfig) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !mc.Enabled {
 		s.removeHandlerLocked(mc.RequestID)
+		s.mu.Unlock()
+		s.notifyActivity("status", nil)
 		return
 	}
 	s.handlers[mc.RequestID] = &entry{cfg: mc, specificity: computeSpecificity(mc.Path)}
 	s.rebuildOrderLocked()
+	s.mu.Unlock()
+	s.notifyActivity("status", nil)
 }
 
 // RemoveHandler removes a mock handler by request ID.
 func (s *Server) RemoveHandler(requestID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.removeHandlerLocked(requestID)
+	s.mu.Unlock()
+	s.notifyActivity("status", nil)
 }
 
 func (s *Server) removeHandlerLocked(requestID string) {
@@ -178,6 +187,7 @@ func (s *Server) Start(port int) error {
 		}
 	}()
 	slog.Info("mock server started", "port", port)
+	s.notifyActivity("status", nil)
 	return nil
 }
 
@@ -203,6 +213,7 @@ func (s *Server) Stop() error {
 		return err
 	}
 	slog.Info("mock server stopped")
+	s.notifyActivity("status", nil)
 	return nil
 }
 
@@ -352,6 +363,13 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, mc models.Moc
 	return status, nil
 }
 
+// notifyActivity fires the OnActivity callback if set, safely (no-op on nil).
+func (s *Server) notifyActivity(kind string, data any) {
+	if s.OnActivity != nil {
+		s.OnActivity(kind, data)
+	}
+}
+
 // recordLog appends a log entry to the ring buffer.
 func (s *Server) recordLog(r *http.Request, status int, dur time.Duration, matched *models.MockConfig) {
 	headers := make(map[string]string, len(r.Header))
@@ -376,9 +394,11 @@ func (s *Server) recordLog(r *http.Request, status int, dur time.Duration, match
 	}
 
 	s.logMu.Lock()
-	defer s.logMu.Unlock()
 	s.log = append(s.log, entry)
 	if len(s.log) > s.logCap {
 		s.log = s.log[len(s.log)-s.logCap:]
 	}
+	s.logMu.Unlock()
+
+	s.notifyActivity("log", entry)
 }

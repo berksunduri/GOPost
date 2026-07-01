@@ -137,6 +137,32 @@ const dictionary = {
   mockStarting: "Starting…",
   mockStopping: "Stopping…",
   mockProviderError: "useMockServer must be used within MockServerProvider",
+
+  // Postman import
+  postmanImportSuccess: "Postman collection imported",
+  postmanImportFailed: "Postman import failed",
+  postmanEnvImportSuccess: "Postman environment imported",
+  postmanEnvImportFailed: "Environment import failed",
+  importingPostman: "Importing Postman collection…",
+
+  // OpenAPI / Swagger import
+  openapiImportSuccess: "OpenAPI spec imported",
+  openapiImportFailed: "OpenAPI import failed",
+  importingOpenAPI: "Importing OpenAPI spec…",
+  swaggerImportSuccess: "Swagger spec imported",
+  swaggerImportFailed: "Swagger import failed",
+
+  // Code generation
+  copyAsCurl: "Copy as cURL",
+  copyAsFetch: "Copy as JavaScript (fetch)",
+  copyAsAxios: "Copy as JavaScript (axios)",
+  copyAsGo: "Copy as Go",
+  copyAsPython: "Copy as Python",
+  copyAsHTTPie: "Copy as HTTPie",
+  codeCopied: "Code copied to clipboard",
+  generateCode: "Generate Code",
+  selectLanguage: "Select language",
+  noRequestForCodegen: "Open a request to generate code",
 };
 
 export function t(key) {

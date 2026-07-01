@@ -12,6 +12,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: "hidden",
+    rollupOptions: {
+      external: ["/wails/runtime.js"],
+    },
   },
   test: {
     environment: "jsdom",

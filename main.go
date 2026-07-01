@@ -99,6 +99,12 @@ func main() {
 	// Register graceful shutdown hook for mock server cleanup
 	wailsApp.OnShutdown(func() { appInstance.Shutdown() })
 
+	// Bridge mock server activity into Wails events so the frontend can
+	// subscribe instead of polling (see MockServerContext).
+	appInstance.SetMockEventCallback(func(kind string, data any) {
+		wailsApp.Event.Emit("mock:"+kind, data)
+	})
+
 	// Create the app window
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "GoPost",
@@ -767,6 +773,64 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 		writeJSON(w, val, err)
 	}))
 
+	// -- Catch-all: unmatched /api/ routes/a
+	// -- Postman Import --
+	mux.HandleFunc("POST /api/collections/{id}/import-postman", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ImportPostmanCollection(payload.Content, r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/environments/import-postman", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ImportPostmanEnvironment(payload.Content)
+		writeJSON(w, val, err)
+	}))
+
+	// -- OpenAPI/Swagger Import --
+	mux.HandleFunc("POST /api/collections/{id}/import-openapi", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ImportOpenAPISpec(payload.Content, r.PathValue("id"))
+		writeJSON(w, val, err)
+	}))
+
+	// -- Code Generation --
+	mux.HandleFunc("POST /api/requests/{id}/generate-code", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Language string `json:"language"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.GenerateCode(r.PathValue("id"), payload.Language)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("GET /api/code-languages", h(func(w http.ResponseWriter, r *http.Request) {
+		val := appInstance.GetCodeLanguages()
+		writeJSON(w, val, nil)
+	}))
+
+	// -- Catch-all --
 	// ── Catch-all: unmatched /api/ routes ────────────────────────
 
 	mux.HandleFunc("/api/", h(func(w http.ResponseWriter, r *http.Request) {

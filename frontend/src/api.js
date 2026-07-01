@@ -626,4 +626,52 @@ export const api = {
       return service.ClearMockLog();
     return fetchJSON("/api/mock/log", { method: "DELETE" });
   },
+
+  // ==================== Postman Import ====================
+  async ImportPostmanCollection(content, collectionId) {
+    const service = getAppService();
+    if (service && typeof service.ImportPostmanCollection === "function")
+      return service.ImportPostmanCollection(content, collectionId);
+    return fetchJSON(`/api/collections/${collectionId}/import-postman`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  },
+  async ImportPostmanEnvironment(content) {
+    const service = getAppService();
+    if (service && typeof service.ImportPostmanEnvironment === "function")
+      return service.ImportPostmanEnvironment(content);
+    return fetchJSON("/api/environments/import-postman", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  },
+
+  // ==================== OpenAPI/Swagger Import ====================
+  async ImportOpenAPISpec(content, collectionId) {
+    const service = getAppService();
+    if (service && typeof service.ImportOpenAPISpec === "function")
+      return service.ImportOpenAPISpec(content, collectionId);
+    return fetchJSON(`/api/collections/${collectionId}/import-openapi`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  },
+
+  // ==================== Code Generation ====================
+  async GenerateCode(requestId, language) {
+    const service = getAppService();
+    if (service && typeof service.GenerateCode === "function")
+      return service.GenerateCode(requestId, language);
+    return fetchJSON(`/api/requests/${requestId}/generate-code`, {
+      method: "POST",
+      body: JSON.stringify({ language }),
+    });
+  },
+  async GetCodeLanguages() {
+    const service = getAppService();
+    if (service && typeof service.GetCodeLanguages === "function")
+      return service.GetCodeLanguages();
+    return fetchJSON("/api/code-languages");
+  },
 };
