@@ -73,6 +73,7 @@ export function GQLResponseViewer({ response }) {
   const rawHighlighted = useMemo(() => {
     if (!bodyIsJSON || !body) return null;
     const formatted = beautified ? beautifyJSONStable(body) : body;
+    if (formatted.length > 32 * 1024) return null;
     return highlightJSON(formatted, isLight);
   }, [bodyIsJSON, body, beautified, beautifyJSONStable, isLight]);
 

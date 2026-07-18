@@ -1,6 +1,5 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
-  Input,
   Button,
   Tooltip,
   TooltipContent,
@@ -8,6 +7,7 @@ import {
 } from "@/components/ui";
 import { Send } from "lucide-react";
 import { t } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 /**
  * Parse a URL string and return segments, distinguishing plain text
@@ -59,6 +59,8 @@ export function URLBar({
   children,
   envVars,
 }) {
+  const [focused, setFocused] = useState(false);
+
   const { segments } = useMemo(
     () => parseURLWithVars(url, envVars),
     [url, envVars],
@@ -66,28 +68,60 @@ export function URLBar({
 
   const hasVars = segments.some((s) => s.type === "variable");
 
+  const handleChange = (e) => {
+    onChange(e.target.value.replace(/\n/g, ""));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!loading) onSend?.();
+    }
+    if (e.key === "Escape") {
+      e.currentTarget.blur();
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-1 min-w-0">
-      <div className="flex gap-2 items-center">
-        <Input
-          type="url"
+    <div className="flex flex-col gap-1 min-w-0 w-full">
+      <div className="flex gap-2 items-start">
+        <textarea
+          rows={focused ? 4 : 1}
           value={url}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
           onPaste={onPaste}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           placeholder={placeholder || "https://api.example.com/endpoint"}
-          className="flex-1 font-mono text-sm"
+          spellCheck={false}
+          className={cn(
+            "flex-1 min-w-0 resize-none rounded-md border border-input",
+            "bg-transparent px-3 font-mono text-sm shadow-sm",
+            "placeholder:text-muted-foreground",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            "transition-[min-height] duration-150 ease-out",
+            focused
+              ? "min-h-[96px] py-2 leading-5 break-all overflow-y-auto"
+              : "h-9 min-h-9 py-2 leading-5 overflow-hidden whitespace-nowrap",
+          )}
         />
-        {extraButtons}
-        {onSave && (
-          <Button variant="outline" size="sm" onClick={onSave}>
-            {t("saveRequest")}
+        <div
+          className="flex gap-2 items-center shrink-0 pt-0.5"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {extraButtons}
+          {onSave && (
+            <Button variant="outline" size="sm" onClick={onSave}>
+              {t("saveRequest")}
+            </Button>
+          )}
+          <Button onClick={onSend} disabled={loading} size="sm">
+            <Send className="h-4 w-4" />
+            {loading ? t("sending") : t("send")}
           </Button>
-        )}
-        <Button onClick={onSend} disabled={loading} size="sm">
-          <Send className="h-4 w-4" />
-          {loading ? t("sending") : t("send")}
-        </Button>
-        {children}
+          {children}
+        </div>
       </div>
 
       {/* Inline variable preview */}

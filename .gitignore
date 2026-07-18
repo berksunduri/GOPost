@@ -18,7 +18,8 @@ build/bin/
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/.gitkeep
 
 # Logs and scratch output
 *.log

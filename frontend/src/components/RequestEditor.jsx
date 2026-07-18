@@ -42,7 +42,7 @@ import { CodeGenMenu } from "@/components/CodeGenMenu";
 import { useMockServer } from "@/context/MockServerContext";
 
 function RequestEditor() {
-  const { selectedCollection, collections } = useCollections();
+  const { selectedCollection } = useCollections();
   const { selectedEnvironment } = useEnvironments();
   const { refreshRequests, setSelectedRequest } = useRequests();
   const {
@@ -305,44 +305,7 @@ function RequestEditor() {
       return updated;
     }
     if (!selectedCollection?.id) {
-      if (collections.length > 0) {
-        setSelectedRequest(collections[0]);
-        // Use the first collection directly since state update is async
-        const created = await api.CreateRequest(
-          collections[0].id,
-          name || "New Request",
-          method,
-          u,
-          h,
-          b,
-          "",
-        );
-        await api.SetRequestAuth(
-          created.id,
-          authType,
-          auth.token,
-          auth.username,
-          auth.password,
-          auth.apiKey,
-          auth.apiKeyValue,
-          auth.apiKeyIn,
-        );
-        await api.SetRequestScripts(created.id, preRequestScript, testScript);
-        if (request?.id?.startsWith("new-")) {
-          updateTabData(request.id, {
-            id: created.id,
-            request: created,
-          });
-          markSaved(request.id);
-          openTab(created);
-        }
-        setSelectedRequest(created);
-        await refreshRequests();
-        return created;
-      }
-      throw new Error(
-        "Create a collection first — click + in the Collections panel",
-      );
+      throw new Error(t("saveRequiresCollection"));
     }
 
     const created = await api.CreateRequest(
@@ -395,7 +358,6 @@ function RequestEditor() {
   }, [
     request,
     selectedCollection,
-    collections,
     name,
     method,
     effectiveURL,
@@ -429,11 +391,50 @@ function RequestEditor() {
     const seq = sendSeqRef.current;
     setLoading(true);
     try {
-      const req = await upsertRequest();
-      if (seq !== sendSeqRef.current) return;
-      const result = isGraphQL
-        ? await api.ExecuteGraphQLRequest(req.id)
-        : await api.ExecuteRequest(req.id, envVars);
+      const unsaved = !request?.id || String(request.id).startsWith("new-");
+      let result;
+      if (unsaved) {
+        const h = {};
+        headers.forEach((row) => {
+          if (row.key.trim()) h[row.key.trim()] = row.value.trim();
+        });
+        const payload = {
+          name: name || "Untitled",
+          method,
+          url,
+          headers: h,
+          body,
+          auth: {
+            type: authType,
+            token: auth.token,
+            username: auth.username,
+            password: auth.password,
+            api_key: auth.apiKey,
+            api_key_value: auth.apiKeyValue,
+            api_key_in: auth.apiKeyIn,
+          },
+          preRequestScript,
+          testScript,
+          envVars,
+        };
+        if (isGraphQL) {
+          payload.graphql = {
+            query: gqlQuery,
+            variables: gqlVariables,
+            operation_name: gqlOperationName,
+            schema_url: gqlSchemaURL,
+          };
+          result = await api.ExecuteGraphQLRequestRaw(payload);
+        } else {
+          result = await api.ExecuteRequestRaw(payload);
+        }
+      } else {
+        const req = await upsertRequest();
+        if (seq !== sendSeqRef.current) return;
+        result = isGraphQL
+          ? await api.ExecuteGraphQLRequest(req.id)
+          : await api.ExecuteRequest(req.id, envVars);
+      }
       if (seq !== sendSeqRef.current) return;
       setResponse(result);
 
@@ -454,7 +455,9 @@ function RequestEditor() {
       const statusCode = result.code || result.status;
       const timeMs = result.time || "";
       toast.success(`${statusCode} ${timeMs ? `in ${timeMs}ms` : ""}`);
-      await refreshRequests();
+      if (!unsaved) {
+        await refreshRequests();
+      }
 
       // Run response extractions
       const active = extracts.filter((e) => e.name && e.path && e.env);
@@ -504,6 +507,20 @@ function RequestEditor() {
     isConnectionMode,
     extracts,
     envVars,
+    request,
+    name,
+    method,
+    headers,
+    body,
+    authType,
+    auth,
+    preRequestScript,
+    testScript,
+    gqlQuery,
+    gqlVariables,
+    gqlOperationName,
+    gqlSchemaURL,
+    pushResponse,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -659,15 +676,17 @@ function RequestEditor() {
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       {/* Request bar */}
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <MethodSelector value={method} onChange={setMethod} />
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t("requestName")}
-          className="flex-1 min-w-[100px] max-w-[200px] h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-        />
+      <div className="flex flex-col gap-2 px-4 py-3 min-w-0">
+        <div className="flex flex-wrap items-center gap-3">
+          <MethodSelector value={method} onChange={setMethod} />
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("requestName")}
+            className="flex-1 min-w-[100px] max-w-[200px] h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+          />
+        </div>
         <URLBar
           url={url}
           onChange={setURL}

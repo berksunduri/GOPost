@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isJSON, beautifyJSON, highlightJSON } from "../json.js";
+import { isJSON, beautifyJSON, highlightJSON, highlightJSONLine } from "../json.js";
 
 describe("isJSON", () => {
   it("returns false for null/undefined", () => {
@@ -118,5 +118,15 @@ describe("highlightJSON", () => {
     expect(dark).not.toBe(light);
     expect(light).toContain("text-sky-600");
     expect(dark).toContain("text-sky-400");
+  });
+});
+
+describe("highlightJSONLine", () => {
+  it("colors keys, strings, and numbers", () => {
+    const html = highlightJSONLine('  "name": "Ada", "n": 42, "ok": true');
+    expect(html).toContain("text-sky-400");
+    expect(html).toContain("text-emerald-400");
+    expect(html).toContain("text-amber-400");
+    expect(html).toContain("text-purple-400");
   });
 });

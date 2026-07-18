@@ -3,4 +3,4 @@
 # - Frontend: Vite HMR (instant, no restart)
 # - Backend:  auto-rebuilds on .go file changes
 cd "$(dirname "$0")"
-exec wails3 dev -port 34115
+exec wails3 dev -config ./build/config.yml -port 34115

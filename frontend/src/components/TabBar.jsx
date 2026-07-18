@@ -15,8 +15,7 @@ const methodColors = {
 
 export const TabBar = React.memo(function TabBar() {
   const { openTabs, activeTabId, openTab, closeTab } = useTabs();
-  const { selectedCollection, collections, selectCollection } =
-    useCollections();
+  const { selectCollection } = useCollections();
 
   const scrollRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -52,12 +51,7 @@ export const TabBar = React.memo(function TabBar() {
   };
 
   const handleNewTab = () => {
-    let collId = selectedCollection?.id;
-    if (!collId && collections.length > 0) {
-      collId = collections[0].id;
-      selectCollection(collections[0]);
-    }
-
+    selectCollection(null);
     const tempId = `new-${Date.now()}`;
     openTab({
       id: tempId,
@@ -67,7 +61,7 @@ export const TabBar = React.memo(function TabBar() {
       headers: {},
       body: "",
       auth: { type: "none" },
-      collection_id: collId || "",
+      collection_id: "",
     });
   };
 

@@ -163,11 +163,7 @@ function App() {
       }
       if (matchShortcut(e, shortcuts.newTab)) {
         e.preventDefault();
-        let collId = selectedCollection?.id;
-        if (!collId && collections.length > 0) {
-          collId = collections[0].id;
-          selectCollection?.(collections[0]);
-        }
+        selectCollection(null);
         const tempId = `new-${Date.now()}`;
         openTab({
           id: tempId,
@@ -177,7 +173,7 @@ function App() {
           headers: {},
           body: "",
           auth: { type: "none" },
-          collection_id: collId || "",
+          collection_id: "",
         });
         return;
       }
@@ -208,8 +204,6 @@ function App() {
   }, [
     shortcuts,
     openSettings,
-    selectedCollection,
-    collections,
     selectCollection,
     openTabs,
     activeTabId,
@@ -750,8 +744,7 @@ function App() {
         <div id="main-area" className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0">
             <TabBar />
-            {openTabs.length === 0 && collections.length === 0 ? (
-              /* First-run empty state: no tabs and no collections */
+            {openTabs.length === 0 ? (
               <div className="flex-1 flex items-center justify-center min-h-0">
                 <div className="flex flex-col items-center gap-5 text-center max-w-sm">
                   <div className="rounded-full bg-muted p-4">
@@ -759,10 +752,22 @@ function App() {
                   </div>
                   <div className="space-y-2">
                     <h2 className="text-lg font-semibold text-foreground">
-                      {t("emptyStateTitle")}
+                      {collections.length === 0
+                        ? t("emptyStateTitle")
+                        : t("emptyStateNoRequest")}
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      {t("emptyStateDescription")}
+                      {collections.length === 0
+                        ? t("emptyStateDescription")
+                        : t("emptyStateNoRequestDesc")}{" "}
+                      {collections.length > 0 && (
+                        <>
+                          <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">
+                            {formatShortcut(shortcuts.newTab)}
+                          </kbd>{" "}
+                          {t("emptyStateNoRequestCTA")}
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className="flex flex-col gap-2 w-48">
@@ -770,11 +775,34 @@ function App() {
                       variant="default"
                       size="sm"
                       className="w-full"
-                      onClick={() => createCollection("My Collection")}
+                      onClick={() => {
+                        selectCollection(null);
+                        const tempId = `new-${Date.now()}`;
+                        openTab({
+                          id: tempId,
+                          name: "New Request",
+                          method: "GET",
+                          url: "https://api.example.com",
+                          headers: {},
+                          body: "",
+                          auth: { type: "none" },
+                          collection_id: "",
+                        });
+                      }}
                     >
                       <Plus className="h-4 w-4 mr-1.5" />
                       {t("emptyStateCTA")}
                     </Button>
+                    {collections.length === 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => createCollection("My Collection")}
+                      >
+                        {t("emptyStateCreateCollection")}
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -783,34 +811,6 @@ function App() {
                     >
                       {t("emptyStateOpenGuide")}
                     </Button>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground/50">
-                    {t("emptyStateNoRequestDesc")}{" "}
-                    <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">
-                      {formatShortcut(shortcuts.newTab)}
-                    </kbd>{" "}
-                    {t("emptyStateNoRequestCTA")}
-                  </p>
-                </div>
-              </div>
-            ) : openTabs.length === 0 ? (
-              /* No tab open but collections exist */
-              <div className="flex-1 flex items-center justify-center min-h-0">
-                <div className="flex flex-col items-center gap-4 text-center">
-                  <div className="rounded-full bg-muted p-3">
-                    <Plus className="h-8 w-8 text-muted-foreground/40" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">
-                      {t("emptyStateNoRequest")}
-                    </p>
-                    <p className="text-xs text-muted-foreground/60">
-                      {t("emptyStateNoRequestDesc")}{" "}
-                      <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">
-                        {formatShortcut(shortcuts.newTab)}
-                      </kbd>{" "}
-                      {t("emptyStateNoRequestCTA")}
-                    </p>
                   </div>
                 </div>
               </div>

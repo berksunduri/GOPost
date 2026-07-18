@@ -183,6 +183,26 @@ describe("api.js — fetch fallback path", () => {
     expect(fetch).toHaveBeenCalledWith("/api/requests/r1/execute", expect.objectContaining({ method: "POST" }));
   });
 
+  it("ExecuteRequestRaw: POST /api/requests/execute-raw", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({}));
+    await api.ExecuteRequestRaw({ method: "GET", url: "https://example.com" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/requests/execute-raw",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("ExecuteGraphQLRequestRaw: POST /api/requests/execute-graphql-raw", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({}));
+    await api.ExecuteGraphQLRequestRaw({
+      url: "https://example.com/graphql",
+      graphql: { query: "{ __typename }" },
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/requests/execute-graphql-raw",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
   // ==================== History ====================
 
   it("GetHistory: GET /api/history", async () => {

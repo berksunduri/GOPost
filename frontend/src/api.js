@@ -358,6 +358,24 @@ export const api = {
       body: JSON.stringify({ envVars: envVars || {} }),
     });
   },
+  async ExecuteRequestRaw(payload) {
+    const service = getAppService();
+    if (service && typeof service.ExecuteRequestRaw === "function")
+      return service.ExecuteRequestRaw(payload);
+    return fetchJSON("/api/requests/execute-raw", {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+  async ExecuteGraphQLRequestRaw(payload) {
+    const service = getAppService();
+    if (service && typeof service.ExecuteGraphQLRequestRaw === "function")
+      return service.ExecuteGraphQLRequestRaw(payload);
+    return fetchJSON("/api/requests/execute-graphql-raw", {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
   async ExecCommand(command) {
     const service = getAppService();
     if (service && typeof service.ExecCommand === "function")

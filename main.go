@@ -358,6 +358,26 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 		writeJSON(w, val, err)
 	}))
 
+	mux.HandleFunc("POST /api/requests/execute-raw", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload app.ExecuteRawParams
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ExecuteRequestRaw(payload)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/requests/execute-graphql-raw", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload app.ExecuteRawParams
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.ExecuteGraphQLRequestRaw(payload)
+		writeJSON(w, val, err)
+	}))
+
 	mux.HandleFunc("POST /api/requests/{id}/auth", h(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			AuthType    string `json:"authType"`

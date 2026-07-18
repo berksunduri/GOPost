@@ -124,6 +124,20 @@ type ExecuteRequestParams struct {
 	EnvVars map[string]string
 }
 
+// ExecuteRawParams holds an in-memory request for ad-hoc execution (no persist).
+type ExecuteRawParams struct {
+	Name             string                 `json:"name"`
+	Method           string                 `json:"method"`
+	URL              string                 `json:"url"`
+	Headers          map[string]string      `json:"headers"`
+	Body             string                 `json:"body"`
+	Auth             models.RequestAuth     `json:"auth"`
+	PreRequestScript string                 `json:"preRequestScript"`
+	TestScript       string                 `json:"testScript"`
+	EnvVars          map[string]string      `json:"envVars"`
+	GraphQL          *models.GraphQLPayload `json:"graphql,omitempty"`
+}
+
 // schemaStore holds the GraphQL schema cache and its lock.
 type schemaStore struct {
 	mu    sync.RWMutex
@@ -402,28 +416,61 @@ func (a *App) DeleteRequest(id string) (map[string]bool, error) {
 	return map[string]bool{"ok": true}, err
 }
 
-// ExecuteRequest executes an HTTP request and returns the response.
+// ExecuteRequest executes a persisted HTTP request and returns the response.
 // Runs pre-request scripts before sending and test scripts after receiving.
 func (a *App) ExecuteRequest(id string, p ExecuteRequestParams) (map[string]interface{}, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
+	return a.executeHTTPRequest(request, p.EnvVars)
+}
 
+// ExecuteRequestRaw executes an HTTP request from editor state without persisting it.
+func (a *App) ExecuteRequestRaw(p ExecuteRawParams) (map[string]interface{}, error) {
+	if strings.TrimSpace(p.URL) == "" {
+		return nil, fmt.Errorf("url is required")
+	}
+	method := p.Method
+	if method == "" {
+		method = "GET"
+	}
+	headers := p.Headers
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	name := p.Name
+	if name == "" {
+		name = "Untitled"
+	}
+	return a.executeHTTPRequest(&models.HTTPRequest{
+		Name:             name,
+		Method:           method,
+		URL:              p.URL,
+		Headers:          headers,
+		Body:             p.Body,
+		Auth:             p.Auth,
+		PreRequestScript: p.PreRequestScript,
+		TestScript:       p.TestScript,
+	}, p.EnvVars)
+}
+
+// executeHTTPRequest runs the HTTP path for a request already in memory.
+func (a *App) executeHTTPRequest(request *models.HTTPRequest, envVars map[string]string) (map[string]interface{}, error) {
 	// Apply environment variable substitution to URL, body, and headers.
 	// This is the single source of truth — the frontend saves raw templates.
-	if len(p.EnvVars) > 0 {
-		request.URL = substituteVars(request.URL, p.EnvVars)
-		request.Body = substituteVars(request.Body, p.EnvVars)
+	if len(envVars) > 0 {
+		request.URL = substituteVars(request.URL, envVars)
+		request.Body = substituteVars(request.Body, envVars)
 		substitutedHeaders := make(map[string]string, len(request.Headers))
 		for k, v := range request.Headers {
-			substitutedHeaders[substituteVars(k, p.EnvVars)] = substituteVars(v, p.EnvVars)
+			substitutedHeaders[substituteVars(k, envVars)] = substituteVars(v, envVars)
 		}
 		request.Headers = substitutedHeaders
 	}
 
 	// Script env is mainly for chaining between pre-request and test scripts.
-	env := p.EnvVars
+	env := envVars
 	if env == nil {
 		env = make(map[string]string)
 	}
@@ -1271,13 +1318,41 @@ func (a *App) GetCachedGraphQLSchema(url string) (map[string]interface{}, error)
 	return cached.Schema, nil
 }
 
-// ExecuteGraphQLRequest executes a GraphQL request and returns the response.
+// ExecuteGraphQLRequest executes a persisted GraphQL request and returns the response.
 func (a *App) ExecuteGraphQLRequest(id string) (map[string]interface{}, error) {
 	request, err := a.git.GetRequest(id)
 	if err != nil {
 		return nil, err
 	}
+	return a.executeGraphQLRequest(request)
+}
 
+// ExecuteGraphQLRequestRaw executes a GraphQL request from editor state without persisting it.
+func (a *App) ExecuteGraphQLRequestRaw(p ExecuteRawParams) (map[string]interface{}, error) {
+	if strings.TrimSpace(p.URL) == "" {
+		return nil, fmt.Errorf("url is required")
+	}
+	headers := p.Headers
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	name := p.Name
+	if name == "" {
+		name = "Untitled"
+	}
+	req := &models.HTTPRequest{
+		Name:    name,
+		Method:  "GRAPHQL",
+		URL:     p.URL,
+		Headers: headers,
+		Body:    p.Body,
+		Auth:    p.Auth,
+		GraphQL: p.GraphQL,
+	}
+	return a.executeGraphQLRequest(req)
+}
+
+func (a *App) executeGraphQLRequest(request *models.HTTPRequest) (map[string]interface{}, error) {
 	gql := request.GraphQL
 	if gql == nil {
 		// Fallback: treat body as raw GraphQL query

@@ -38,7 +38,7 @@ tasks:
     deps:
       - task: go:mod:tidy
     cmds:
-      - go build -ldflags="-X main.version={{.VERSION}}" -o {{.BIN_DIR}}/gopost{{exeExt .OS}} ./cmd/gopost/
+      - go build -ldflags="-X main.version={{.VERSION}}" -o {{.BIN_DIR}}/gopost{{exeExt}} ./cmd/gopost/
     vars:
       VERSION:
         sh: echo "${VERSION:-1.0.0-dev}"

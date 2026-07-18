@@ -1,12 +1,10 @@
+### Health
+GET http://localhost:9876/health
+
 ### GET Request
-GET https://httpbin.org/get
+GET http://localhost:9876/health
 User-Agent: GoPost-CLI/1.0
 
-### POST JSON
-POST https://httpbin.org/post
-Content-Type: application/json
-
-{"name": "GoPost", "test": true}
-
-### GET Status 200
-GET https://httpbin.org/status/200
+### Expected status assertion
+GET http://localhost:9876/health
+X-Expected-Status: 200

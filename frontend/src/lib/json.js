@@ -21,7 +21,14 @@ export function isJSON(body, headers) {
     }
   }
 
-  // Fallback: try to parse
+  // Heuristic first char — avoid full parse on huge non-JSON blobs
+  const first = trimmed[0];
+  if (first !== "{" && first !== "[") return false;
+
+  // Full parse is expensive on megabyte bodies; treat as JSON if it looks like it
+  // when Content-Type was missing.
+  if (trimmed.length > 512 * 1024) return true;
+
   try {
     JSON.parse(trimmed);
     return true;
@@ -105,4 +112,51 @@ export function highlightJSON(body, isLight = false) {
   }
 
   return format(data, 0);
+}
+
+/**
+ * Lightweight per-line JSON coloring for virtualized viewers.
+ * Operates on one line only — safe for large bodies.
+ */
+export function highlightJSONLine(line, isLight = false) {
+  if (!line) return "";
+
+  const key = isLight ? "text-sky-600" : "text-sky-400";
+  const str = isLight ? "text-emerald-600" : "text-emerald-400";
+  const num = isLight ? "text-amber-600" : "text-amber-400";
+  const bool = isLight ? "text-purple-600" : "text-purple-400";
+  const nil = isLight ? "text-orange-600" : "text-orange-400";
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  const re =
+    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index > last) out += esc(line.slice(last, m.index));
+    if (m[1] !== undefined) {
+      // string, optionally a key if followed by :
+      if (m[2] !== undefined) {
+        out += `<span class="${key}">${esc(m[1])}</span>${esc(m[2])}`;
+      } else {
+        out += `<span class="${str}">${esc(m[1])}</span>`;
+      }
+    } else if (m[3] !== undefined) {
+      const cls = m[3] === "null" ? nil : bool;
+      out += `<span class="${cls}">${m[3]}</span>`;
+    } else {
+      out += `<span class="${num}">${esc(m[0])}</span>`;
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < line.length) out += esc(line.slice(last));
+  return out;
 }
