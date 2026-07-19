@@ -361,4 +361,79 @@ describe("api.js — fetch fallback path", () => {
       }),
     );
   });
+
+  // ==================== Additional coverage ====================
+
+  it("GetRequest / MoveRequest / UpdateRequest / SetRequestAuth", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({}));
+    await api.GetRequest("r1");
+    expect(fetch).toHaveBeenCalledWith("/api/requests/r1", expect.any(Object));
+
+    await api.MoveRequest("r1", "c2");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/requests/r1/move",
+      expect.objectContaining({ method: "PUT" }),
+    );
+
+    await api.UpdateRequest("r1", "N", "POST", "https://x", {}, "{}", "d");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/requests/r1",
+      expect.objectContaining({ method: "PUT" }),
+    );
+
+    await api.SetRequestAuth("r1", "bearer", "tok", "", "", "", "", "");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/requests/r1/auth",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("Import/export HTTP and GraphQL helpers", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({}));
+    await api.ImportHTTPContent("c1", "GET https://x");
+    await api.ExportCollectionAsHTTPContent("c1");
+    await api.ExportCollectionAsHTTPFile("c1");
+    await api.IntrospectGraphQLSchema("https://x/graphql");
+    await api.GetCachedGraphQLSchema("https://x/graphql");
+    await api.ExecuteGraphQLRequest("r1");
+    await api.SetRequestGraphQL("r1", "{a}", "{}", "", "");
+    await api.GetRunHistory("c1");
+    await api.GetRequestScripts("r1");
+    await api.SetRequestScripts("r1", "a", "b");
+    await api.RunPreRequestScript("r1", "a");
+    await api.RunTestScript("r1", "a", { status: 200 });
+    await api.GitAddRemote("c1", "origin", "https://x.git");
+    await api.GitPush("c1", "origin");
+    await api.GitPull("c1", "origin");
+    await api.DisconnectWebSocket("ws1");
+    await api.SendWebSocketMessage("ws1", "hi");
+    await api.GetAllWebSocketMessages("ws1");
+    await api.GetWebSocketStatus("ws1");
+    await api.DisconnectSSE("s1");
+    await api.GetAllSSEEvents("s1");
+    await api.GetSSEStatus("s1");
+    await api.StartMockServer(3001);
+    await api.StopMockServer();
+    await api.GetMockStatus();
+    await api.SetMockConfig("r1", { statusCode: 200, body: "{}" });
+    await api.RemoveMockConfig("r1");
+    await api.LoadMockConfigs("c1");
+    await api.GetMockLog();
+    await api.ClearMockLog();
+    await api.ImportPostmanCollection("{}", "c1");
+    await api.ImportPostmanEnvironment("{}");
+    await api.ImportOpenAPISpec("openapi: 3.0.0", "c1");
+    await api.GenerateCode("r1", "curl");
+    await api.GetCodeLanguages();
+    expect(fetch).toHaveBeenCalled();
+  });
+
+  it("ExecCommand / RevealInFinder / ImportData / ExportData", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({}));
+    await api.ExecCommand("echo hi");
+    await api.RevealInFinder("c1");
+    await api.ImportData("/tmp/x.json");
+    await api.ExportData("/tmp/y.json");
+    expect(fetch).toHaveBeenCalled();
+  });
 });

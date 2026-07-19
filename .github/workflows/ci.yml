@@ -19,10 +19,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run Go tests
-        # app/ and root package require Wails CGO + macOS frameworks (integration only).
-        # All real business logic lives in app/pkg/ and is testable without Wails.
-        run: go test ./app/pkg/... -v -race -timeout 120s
+      - name: Run Go unit tests
+        # app/ no longer imports Wails; App façade tests run in CI.
+        # Coverage gate applies to app/pkg (business logic). App is a thin façade
+        # over pkg + OS/Wails edges — tested for behavior, not statement %.
+        # main_test.go stays behind //go:build integration (HTTP router in main).
+        run: |
+          go test ./app/pkg/... -race -timeout 120s \
+            -coverprofile=coverage.out -covermode=atomic
+          go test ./app -race -timeout 120s
+          go tool cover -func=coverage.out | tee coverage.txt
+          total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$NF); print $NF}')
+          echo "pkg coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t+0 < 84) { print "coverage " t "% below 84% gate"; exit 1 } }'
 
   frontend-tests:
     name: Frontend Tests
@@ -41,6 +50,6 @@ jobs:
         run: npm ci
         working-directory: frontend
 
-      - name: Run frontend tests
-        run: npm test
+      - name: Run frontend tests with coverage
+        run: npm run test:coverage
         working-directory: frontend

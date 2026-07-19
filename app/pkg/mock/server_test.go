@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -373,3 +374,38 @@ func freePort(t *testing.T) int {
 
 // Ensure import-only deps are referenced.
 var _ = strings.TrimSpace
+
+func TestRemoveClearHandlersAndLog(t *testing.T) {
+	s := NewServer()
+	s.SetHandler(models.MockConfig{
+		RequestID: "h1", Method: "GET", Path: "/a", StatusCode: 200, Body: "ok", Enabled: true,
+	})
+	if s.findMatch("GET", "/a") == nil {
+		t.Fatal("expected handler")
+	}
+	s.RemoveHandler("h1")
+	if s.findMatch("GET", "/a") != nil {
+		t.Fatal("handler should be removed")
+	}
+
+	s.SetHandler(models.MockConfig{
+		RequestID: "h2", Method: "GET", Path: "/b", StatusCode: 200, Body: "ok", Enabled: true,
+	})
+	s.ClearHandlers()
+	if len(s.Status().Handlers) != 0 {
+		t.Fatal("ClearHandlers should empty")
+	}
+
+	u, err := url.Parse("http://x/y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.recordLog(&http.Request{Method: "GET", URL: u}, 200, time.Millisecond, nil)
+	if len(s.Log()) == 0 {
+		t.Fatal("expected log entry")
+	}
+	s.ClearLog()
+	if len(s.Log()) != 0 {
+		t.Fatal("ClearLog should empty")
+	}
+}

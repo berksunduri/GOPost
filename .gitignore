@@ -41,6 +41,9 @@ Thumbs.db
 # Build output
 bin/
 
+# Coverage
+frontend/coverage/
+
 # Wails generated bindings (auto-generated)
 frontend/src/wailsjs/
 

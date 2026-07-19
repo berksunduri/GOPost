@@ -214,3 +214,45 @@ func TestReconstructURL_NoHost(t *testing.T) {
 		t.Errorf("expected localhost fallback, got %q", got)
 	}
 }
+
+func TestExtractScript(t *testing.T) {
+	pre, test := ExtractScript([]PostmanEvent{
+		{Listen: "prerequest", Script: &PostmanScript{Exec: []string{"pm.environment.set('a','1');"}}},
+		{Listen: "test", Script: &PostmanScript{Exec: []string{"pm.test('x', function(){});"}}},
+	})
+	if !strings.Contains(pre, "Postman script") || !strings.Contains(pre, "pm.environment") {
+		t.Errorf("pre: %q", pre)
+	}
+	if !strings.Contains(test, "pm.test") {
+		t.Errorf("test: %q", test)
+	}
+}
+
+func TestURLToDisplay(t *testing.T) {
+	if got := urlToDisplay("https://x.com/a?q=1"); got != "https://x.com/a" {
+		t.Errorf("got %q", got)
+	}
+	if got := urlToDisplay("https://x.com/a"); got != "https://x.com/a" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestExtractAuth_BearerAndAPIKey(t *testing.T) {
+	item := PostmanItem{Request: &PostmanRequest{Auth: &PostmanAuth{
+		Type:   "bearer",
+		Bearer: []PostmanKV{{Key: "token", Value: "tok"}},
+	}}}
+	typ, tok := extractAuth(item)
+	if typ != "bearer" || tok != "tok" {
+		t.Errorf("bearer: %q %q", typ, tok)
+	}
+
+	item = PostmanItem{Request: &PostmanRequest{Auth: &PostmanAuth{
+		Type:   "apikey",
+		APIKey: []PostmanKV{{Key: "value", Value: "k"}},
+	}}}
+	typ, tok = extractAuth(item)
+	if typ != "apikey" || tok != "k" {
+		t.Errorf("apikey: %q %q", typ, tok)
+	}
+}

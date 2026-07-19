@@ -3,6 +3,7 @@ package gitops
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -327,5 +328,49 @@ func TestAddRemote_NotARepo(t *testing.T) {
 	err := AddRemote(dir, "origin", "https://github.com/example/repo.git")
 	if err == nil {
 		t.Error("AddRemote on non-repo should return error")
+	}
+}
+
+func TestPushPull_LocalBareRemote(t *testing.T) {
+	src := setupRepoWithCommit(t)
+
+	bare := t.TempDir()
+	if _, err := git.PlainInit(bare, true); err != nil {
+		t.Fatalf("bare init: %v", err)
+	}
+	if err := AddRemote(src, "origin", bare); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+	if err := Push(src, "origin", ""); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	dst := t.TempDir()
+	if _, err := git.PlainClone(dst, false, &git.CloneOptions{URL: bare}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(src, "collection.gopost.json"), []byte(`{"id":"v2"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(src, "update"); err != nil {
+		t.Fatalf("commit2: %v", err)
+	}
+	if err := Push(src, "origin", ""); err != nil {
+		t.Fatalf("push2: %v", err)
+	}
+
+	if err := Pull(dst, "origin"); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "up-to-date") &&
+			!strings.Contains(strings.ToLower(err.Error()), "up to date") {
+			t.Fatalf("pull: %v", err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "collection.gopost.json"))
+	if err != nil {
+		t.Fatalf("read pulled file: %v", err)
+	}
+	if !strings.Contains(string(data), "v2") {
+		t.Errorf("pull did not update file: %s", data)
 	}
 }

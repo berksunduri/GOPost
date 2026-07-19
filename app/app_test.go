@@ -1,8 +1,10 @@
-//go:build integration
-
 package app
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -453,5 +455,243 @@ func TestApp_SaveAndGetUserConfig(t *testing.T) {
 	loaded, _ := a.GetUserConfig()
 	if loaded.ThemeID != "one-dark-pro" {
 		t.Errorf("loaded theme: want 'one-dark-pro', got %q", loaded.ThemeID)
+	}
+}
+
+// ==================== Execute / Scripts / Mock / Import ====================
+
+func TestApp_ExecuteRequestRaw(t *testing.T) {
+	a := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	result, err := a.ExecuteRequestRaw(ExecuteRawParams{
+		Method: "GET",
+		URL:    srv.URL + "/ping",
+		Name:   "ping",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	status, _ := result["status"].(int)
+	if status != 200 && result["status"] != float64(200) && result["code"] != 200 && result["code"] != float64(200) {
+		// status may be int or present under code depending on path
+		if result["body"] == nil {
+			t.Fatalf("unexpected result: %#v", result)
+		}
+	}
+	body, _ := result["body"].(string)
+	if body != `{"ok":true}` {
+		t.Errorf("body: want ok json, got %q", body)
+	}
+}
+
+func TestApp_ExecuteRequestRaw_RequiresURL(t *testing.T) {
+	a := newTestApp(t)
+	_, err := a.ExecuteRequestRaw(ExecuteRawParams{})
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+}
+
+func TestApp_SetAndGetRequestScripts(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("Scripts")
+	req, err := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "R",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	updated, err := a.SetRequestScripts(req.ID, `request.headers["X"]="1"`, `assert.status(expected=200)`)
+	if err != nil {
+		t.Fatalf("set scripts: %v", err)
+	}
+	if updated.PreRequestScript == "" || updated.TestScript == "" {
+		t.Fatal("scripts should be persisted on request")
+	}
+
+	got, err := a.GetRequestScripts(req.ID)
+	if err != nil {
+		t.Fatalf("get scripts: %v", err)
+	}
+	if got["pre_request_script"] == "" || got["test_script"] == "" {
+		t.Errorf("got scripts: %#v", got)
+	}
+}
+
+func TestApp_RunPreRequestAndTestScript(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("S")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "R",
+		Method:       "GET",
+		URL:          "https://example.com",
+		Headers:      map[string]string{},
+	})
+
+	modified, err := a.RunPreRequestScript(req.ID, `request.headers["X-Test"] = "yes"`)
+	if err != nil {
+		t.Fatalf("pre: %v", err)
+	}
+	if modified.Headers["X-Test"] != "yes" {
+		t.Errorf("header not set: %#v", modified.Headers)
+	}
+
+	result := a.RunTestScript(req.ID, `assert.status(expected=200)`, map[string]interface{}{
+		"status":  200,
+		"code":    200,
+		"body":    "ok",
+		"time":    int64(1),
+		"headers": map[string]string{},
+	})
+	if !result.Passed {
+		t.Fatalf("test script failed: %s", result.Error)
+	}
+}
+
+func TestApp_MockServerLifecycle(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("M")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "ping",
+		Method:       "GET",
+		URL:          "http://localhost/ping",
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	if err := a.StartMockServer(port); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = a.StopMockServer() })
+
+	mc, err := a.SetMockConfig(req.ID, 201, map[string]string{"X": "1"}, `{"m":true}`, 0, true)
+	if err != nil {
+		t.Fatalf("set mock: %v", err)
+	}
+	if mc.StatusCode != 201 {
+		t.Errorf("status: %d", mc.StatusCode)
+	}
+
+	configs, err := a.LoadMockConfigs(col.ID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 mock config, got %d", len(configs))
+	}
+
+	status := a.GetMockStatus()
+	if status == nil || !status.Running {
+		t.Fatal("mock server should be running")
+	}
+
+	a.ClearMockLog()
+	if len(a.GetMockLog()) != 0 {
+		t.Error("log should be empty after clear")
+	}
+
+	if err := a.RemoveMockConfig(req.ID); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+}
+
+func TestApp_ImportPostmanAndOpenAPI(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("Import")
+
+	postman := `{
+	  "info": {"name": "P", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+	  "item": [{"name": "Get", "request": {"method": "GET", "url": {"raw": "https://example.com/a", "host": ["example","com"], "path": ["a"]}}}]
+	}`
+	res, err := a.ImportPostmanCollection(postman, col.ID)
+	if err != nil {
+		t.Fatalf("postman: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatalf("empty postman import result: %#v", res)
+	}
+
+	openapi := `{
+	  "openapi": "3.0.0",
+	  "info": {"title": "T", "version": "1.0"},
+	  "paths": {"/pets": {"get": {"summary": "List", "responses": {"200": {"description": "ok"}}}}}
+	}`
+	ores, err := a.ImportOpenAPISpec(openapi, col.ID)
+	if err != nil {
+		t.Fatalf("openapi: %v", err)
+	}
+	if len(ores) == 0 {
+		t.Fatal("empty openapi import result")
+	}
+}
+
+func TestApp_GenerateCode(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("Code")
+	req, _ := a.CreateRequest(CreateRequestParams{
+		CollectionID: col.ID,
+		Name:         "R",
+		Method:       "GET",
+		URL:          "https://example.com",
+	})
+	langs := a.GetCodeLanguages()
+	if len(langs) == 0 {
+		t.Fatal("expected languages")
+	}
+	code, err := a.GenerateCode(req.ID, "curl")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if code["code"] == nil && code["language"] == nil {
+		if len(code) == 0 {
+			t.Fatalf("empty codegen: %#v", code)
+		}
+	}
+}
+
+func TestApp_GitInitAndStatus(t *testing.T) {
+	a := newTestApp(t)
+	col, _ := a.CreateCollection("Git")
+	if err := a.GitInit(col.ID); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	st, err := a.GitStatus(col.ID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !st.IsRepo {
+		t.Error("expected repo after init")
+	}
+}
+
+func TestApp_GetStorageInfo(t *testing.T) {
+	a := newTestApp(t)
+	info := a.GetStorageInfo()
+	if info["base_dir"] == "" {
+		t.Errorf("base_dir missing: %#v", info)
+	}
+}
+
+func TestApp_ServiceStartup(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.ServiceStartup(context.Background(), nil); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -128,3 +128,33 @@ func TestMigrateFromLegacy_SkipsWhenGitStorePopulated(t *testing.T) {
 		t.Errorf("GitStore should be unchanged: %v", cols)
 	}
 }
+
+func TestExportToGitStore(t *testing.T) {
+	dir := t.TempDir()
+	data := &models.ExportData{
+		Collections: []models.Collection{
+			{ID: "c1", Name: "Exported", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		},
+		Requests: []models.HTTPRequest{
+			{
+				ID: "r1", Name: "R", Method: "GET", URL: "https://example.com",
+				CollectionID: "c1", Headers: map[string]string{},
+				CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			},
+		},
+	}
+	if err := ExportToGitStore(dir, data); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	store, err := NewGitStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := store.GetCollections()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cols) != 1 || cols[0].Name != "Exported" {
+		t.Fatalf("collections: %#v", cols)
+	}
+}

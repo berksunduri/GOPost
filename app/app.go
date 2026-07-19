@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"gopost/app/pkg/gitops"
 	"gopost/app/pkg/mock"
@@ -220,8 +219,10 @@ func newSharedHTTPClient() *http.Client {
 	}
 }
 
-// ServiceStartup is called when the Wails service starts
-func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+// ServiceStartup is called when the Wails service starts.
+// Second arg is application.ServiceOptions at runtime; typed as any so this
+// package stays free of the Wails CGO dependency (required for Linux CI tests).
+func (a *App) ServiceStartup(ctx context.Context, _ any) error {
 	a.ctx = ctx
 	if TerminalEnabled {
 		go a.startTerminalServer()

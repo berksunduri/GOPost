@@ -194,3 +194,29 @@ func TestLanguageLabel(t *testing.T) {
 		t.Errorf("expected 'cURL', got %q", label)
 	}
 }
+
+func TestLanguageLabel_All(t *testing.T) {
+	cases := map[CodeLanguage]string{
+		LangCurl: "cURL", LangFetch: "JavaScript (fetch)", LangAxios: "JavaScript (axios)",
+		LangGo: "Go (net/http)", LangPython: "Python (requests)", LangHTTPie: "HTTPie",
+		CodeLanguage("other"): "other",
+	}
+	for lang, want := range cases {
+		if got := LanguageLabel(lang); got != want {
+			t.Errorf("%s: want %q got %q", lang, want, got)
+		}
+	}
+}
+
+func TestEscapeStringAndIndentHeaders(t *testing.T) {
+	if got := escapeString(`a"b\c` + "\n"); !strings.Contains(got, `\"`) || !strings.Contains(got, `\\`) {
+		t.Errorf("escape: %q", got)
+	}
+	out := indentHeaderLines(map[string]string{"A": "1"}, "  ")
+	if !strings.Contains(out, "A") || !strings.Contains(out, "1") {
+		t.Errorf("indent: %q", out)
+	}
+	if indentHeaderLines(nil, "  ") != "" {
+		t.Error("empty headers should yield empty string")
+	}
+}

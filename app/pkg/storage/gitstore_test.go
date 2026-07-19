@@ -521,3 +521,73 @@ func TestGitStore_ConcurrentSaveRequests(t *testing.T) {
 		t.Errorf("concurrent writes: want 20 requests, got %d", len(reqs))
 	}
 }
+
+// ==================== Mock configs ====================
+
+func TestGitStore_MockConfigCRUD(t *testing.T) {
+	g := newStore(t)
+	col := makeCollection("c-mock", "Mocks")
+	if err := g.SaveCollection(col); err != nil {
+		t.Fatal(err)
+	}
+	req := makeRequest("r-mock", "Ping", "c-mock")
+	if err := g.SaveRequest(req); err != nil {
+		t.Fatal(err)
+	}
+
+	mc := &models.MockConfig{
+		RequestID:  "r-mock",
+		Method:     "GET",
+		Path:       "/ping",
+		StatusCode: 200,
+		Body:       `{"ok":true}`,
+		Enabled:    true,
+	}
+	if err := g.SaveMockConfig(mc); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	configs, err := g.GetMockConfigs("c-mock")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1, got %d", len(configs))
+	}
+	if configs[0].RequestID != "r-mock" {
+		t.Errorf("request id: %q", configs[0].RequestID)
+	}
+
+	if g.GetBaseDir() == "" {
+		t.Error("GetBaseDir empty")
+	}
+
+	if err := g.DeleteMockConfig("c-mock", "r-mock"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	configs, _ = g.GetMockConfigs("c-mock")
+	if len(configs) != 0 {
+		t.Fatalf("want 0 after delete, got %d", len(configs))
+	}
+}
+
+func TestGitStore_SaveMockConfig_RequestNotFound(t *testing.T) {
+	g := newStore(t)
+	err := g.SaveMockConfig(&models.MockConfig{RequestID: "missing", Enabled: true})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGitStore_GetMockConfigs_EmptyDir(t *testing.T) {
+	g := newStore(t)
+	col := makeCollection("c2", "C")
+	_ = g.SaveCollection(col)
+	configs, err := g.GetMockConfigs("c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 0 {
+		t.Fatalf("want 0, got %d", len(configs))
+	}
+}
