@@ -26,8 +26,7 @@ Module: `gopost` (Go 1.25+). App name in packaging: **GoPost**.
 | API bridge | `frontend/src/api.js`, `bridge.js` | Wails service first; HTTP `/api/*` fallback |
 | UI state | `frontend/src/context/` | Split contexts (collections, requests, env, tabs, …) |
 | Request UI | `frontend/src/components/RequestEditor.jsx` | Hot path; env substitution for display/send |
-| Product design lock | `docs/superpowers/specs/` | Positioning + invariants |
-| Historical audits / ideas | `plans/` | Not authoritative; verify against code |
+| Release notes | `docs/releases/` | Required for `scripts/release.sh` |
 
 Do not invent packages. If it is not in the table, grep before assuming.
 
@@ -129,7 +128,6 @@ Assume any browser tab / local process can hit the HTTP fallback. Before adding 
 - Import/export by arbitrary filesystem path is dangerous; prefer content-based APIs the UI already uses.
 - `SetWorkspaceDir` must validate the path is a real directory.
 - Terminal / PTY features: origin checks matter if enabled.
-- Full audit trail (may be partially fixed since written): `plans/PRODUCTION_READINESS.md` — **re-verify in code** before acting on any item.
 
 ## How to change things safely
 
@@ -141,5 +139,4 @@ Assume any browser tab / local process can hit the HTTP fallback. Before adding 
 ## Out of scope for agents unless asked
 
 - Releasing (`scripts/release.sh`, `task release`) without an explicit release request.
-- Rewriting `plans/` into a wiki or second docs system.
 - Drive-by refactors of `app/app.go` size unrelated to the task.
