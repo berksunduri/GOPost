@@ -26,6 +26,7 @@ import (
 	"gopost/app/pkg/parser"
 	"gopost/app/pkg/scripting"
 	"gopost/app/pkg/sse"
+	"gopost/app/pkg/storage"
 	"gopost/app/pkg/websocket"
 )
 
@@ -75,6 +76,11 @@ type Store interface {
 
 	// Info
 	GetBaseDir() string
+	AllocateCollectionID(name string) string
+	RenameCollectionDir(oldID, newName string) (string, error)
+	MigrateUUIDCollectionDirs() (int, error)
+	MigrateEnvironmentFilesToSlugs() (int, error)
+	WriteWorkspaceGitignore() error
 }
 
 // CreateRequestParams holds parameters for App.CreateRequest.
@@ -240,7 +246,7 @@ func (a *App) GetCollections() ([]models.Collection, error) {
 // CreateCollection creates a new collection
 func (a *App) CreateCollection(name string) (*models.Collection, error) {
 	collection := &models.Collection{
-		ID:        uuid.New().String(),
+		ID:        a.git.AllocateCollectionID(name),
 		Name:      name,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -261,6 +267,12 @@ func (a *App) UpdateCollection(id string, name string) (*models.Collection, erro
 		return nil, err
 	}
 
+	newID, err := a.git.RenameCollectionDir(id, name)
+	if err != nil {
+		return nil, err
+	}
+
+	collection.ID = newID
 	collection.Name = name
 	collection.UpdatedAt = time.Now()
 
@@ -1733,6 +1745,50 @@ func (a *App) GetStorageInfo() map[string]string {
 		"format":   "git-friendly (directory-per-collection)",
 		"schema":   "1",
 	}
+}
+
+// SetWorkspaceDir switches the active GitStore to dir and persists the pointer.
+func (a *App) SetWorkspaceDir(dir string) (map[string]string, error) {
+	abs, err := storage.ValidateWorkspaceDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	store, err := storage.NewGitStore(abs)
+	if err != nil {
+		return nil, fmt.Errorf("open workspace: %w", err)
+	}
+	if _, err := store.MigrateUUIDCollectionDirs(); err != nil {
+		slog.Warn("collection slug migration", "error", err)
+	}
+	if _, err := store.MigrateEnvironmentFilesToSlugs(); err != nil {
+		slog.Warn("environment slug migration", "error", err)
+	}
+	_ = store.WriteWorkspaceGitignore()
+	if err := storage.SaveWorkspacePointer(abs); err != nil {
+		return nil, fmt.Errorf("save workspace pointer: %w", err)
+	}
+	a.git = store
+	return a.GetStorageInfo(), nil
+}
+
+// RevealWorkspace opens the workspace root in the OS file manager.
+func (a *App) RevealWorkspace() error {
+	return openPath(a.git.GetBaseDir())
+}
+
+// BuildCICommand returns a copy-pasteable gopost run invocation for the workspace.
+func (a *App) BuildCICommand(collectionID, envName string) string {
+	base := a.git.GetBaseDir()
+	col := collectionID
+	if col == "" {
+		col = "<collection>"
+	}
+	cmd := fmt.Sprintf("gopost run --data-dir %q", base)
+	if envName != "" {
+		cmd += fmt.Sprintf(" --env %q", envName)
+	}
+	cmd += fmt.Sprintf(" --reporter junit --output results.xml %q", col)
+	return cmd
 }
 
 // startTerminalServer runs a dedicated HTTP server for the terminal WebSocket.

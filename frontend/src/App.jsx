@@ -63,7 +63,6 @@ function App() {
   const [importModeState, setImportModeState] = React.useState("replace");
   const [showSettings, setShowSettings] = useState(false);
   const [settingsSection, setSettingsSection] = useState("appearance");
-
   const openSettings = useCallback((section = "appearance") => {
     setSettingsSection(section);
     setShowSettings(true);
@@ -807,7 +806,15 @@ function App() {
                       variant="outline"
                       size="sm"
                       className="w-full"
-                      onClick={() => setShowSettings(true)}
+                      onClick={() => openSettings("workspace")}
+                    >
+                      {t("emptyStateOpenWorkspace")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => openSettings("appearance")}
                     >
                       {t("emptyStateOpenGuide")}
                     </Button>

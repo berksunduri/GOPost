@@ -27,17 +27,24 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
-	// Get app data directory
+	// Global app data (logs, workspace pointer) always under ~/.gopost
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("cannot determine home directory", "error", err)
 		os.Exit(1)
 	}
-	appDataDir := filepath.Join(homeDir, ".gopost")
+	globalDataDir := filepath.Join(homeDir, ".gopost")
+	os.MkdirAll(globalDataDir, 0700)
+
+	appDataDir, err := storage.ResolveWorkspaceDir("")
+	if err != nil {
+		slog.Error("failed to resolve workspace", "error", err)
+		os.Exit(1)
+	}
 	os.MkdirAll(appDataDir, 0700)
 
 	// Configure structured logging: JSON to file, text to stderr in dev.
-	logFile, err := os.OpenFile(filepath.Join(appDataDir, "gopost.log"),
+	logFile, err := os.OpenFile(filepath.Join(globalDataDir, "gopost.log"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err == nil {
 		defer logFile.Close()
@@ -64,6 +71,17 @@ func main() {
 		slog.Error("failed to initialize storage", "error", err)
 		os.Exit(1)
 	}
+	if n, err := store.MigrateUUIDCollectionDirs(); err != nil {
+		slog.Warn("collection slug migration", "error", err)
+	} else if n > 0 {
+		slog.Info("renamed UUID collection dirs to slugs", "count", n)
+	}
+	if n, err := store.MigrateEnvironmentFilesToSlugs(); err != nil {
+		slog.Warn("environment slug migration", "error", err)
+	} else if n > 0 {
+		slog.Info("renamed UUID environment files to slugs", "count", n)
+	}
+	_ = store.WriteWorkspaceGitignore()
 
 	// Create app
 	appInstance := app.NewApp(store)
@@ -87,7 +105,7 @@ func main() {
 	// Create Wails application
 	wailsApp := application.New(application.Options{
 		Name:        "GoPost",
-		Description: "GoPost - Postman clone built with Go and Wails",
+		Description: "GoPost — git-friendly HTTP workspace and CI runner",
 		Assets: application.AssetOptions{
 			Handler: assetHandler,
 		},
@@ -529,6 +547,31 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 	mux.HandleFunc("GET /api/storage-info", h(func(w http.ResponseWriter, r *http.Request) {
 		val := appInstance.GetStorageInfo()
 		writeJSON(w, val, nil)
+	}))
+
+	mux.HandleFunc("POST /api/workspace", h(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Path string `json:"path"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		val, err := appInstance.SetWorkspaceDir(payload.Path)
+		writeJSON(w, val, err)
+	}))
+
+	mux.HandleFunc("POST /api/workspace/reveal", h(func(w http.ResponseWriter, r *http.Request) {
+		err := appInstance.RevealWorkspace()
+		writeJSON(w, map[string]bool{"ok": err == nil}, err)
+	}))
+
+	mux.HandleFunc("GET /api/ci-command", h(func(w http.ResponseWriter, r *http.Request) {
+		collectionID := r.URL.Query().Get("collection")
+		envName := r.URL.Query().Get("env")
+		writeJSON(w, map[string]string{
+			"command": appInstance.BuildCICommand(collectionID, envName),
+		}, nil)
 	}))
 
 	mux.HandleFunc("GET /api/term-port", h(func(w http.ResponseWriter, r *http.Request) {

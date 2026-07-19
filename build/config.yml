@@ -4,9 +4,9 @@ info:
   companyName: "GoPost"
   productName: "GoPost"
   productIdentifier: "com.gopost.app"
-  description: "GoPost - Postman clone built with Go and Wails"
+  description: "GoPost — git-friendly HTTP workspace and CI runner"
   copyright: "(c) 2025, GoPost"
-  comments: "An educational Postman clone"
+  comments: "Git-friendly HTTP workspace and CI runner"
   version: "1.0.0"
 
 dev_mode:

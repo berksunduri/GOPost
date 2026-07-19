@@ -393,6 +393,38 @@ export const api = {
       method: "POST",
     });
   },
+  async GetStorageInfo() {
+    const service = getAppService();
+    if (service && typeof service.GetStorageInfo === "function")
+      return service.GetStorageInfo();
+    return fetchJSON("/api/storage-info");
+  },
+  async SetWorkspaceDir(path) {
+    const service = getAppService();
+    if (service && typeof service.SetWorkspaceDir === "function")
+      return service.SetWorkspaceDir(path);
+    return fetchJSON("/api/workspace", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  },
+  async RevealWorkspace() {
+    const service = getAppService();
+    if (service && typeof service.RevealWorkspace === "function")
+      return service.RevealWorkspace();
+    return fetchJSON("/api/workspace/reveal", { method: "POST" });
+  },
+  async BuildCICommand(collectionId, envName) {
+    const service = getAppService();
+    if (service && typeof service.BuildCICommand === "function")
+      return service.BuildCICommand(collectionId || "", envName || "");
+    const params = new URLSearchParams();
+    if (collectionId) params.set("collection", collectionId);
+    if (envName) params.set("env", envName);
+    const q = params.toString();
+    const data = await fetchJSON(`/api/ci-command${q ? `?${q}` : ""}`);
+    return data?.command || "";
+  },
   async GitInit(collectionId) {
     const service = getAppService();
     if (service && typeof service.GitInit === "function")

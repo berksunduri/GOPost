@@ -431,7 +431,42 @@ func (g *GitStore) saveEnvironmentLocked(env *models.Environment) error {
 		return err
 	}
 	env.UpdatedAt = time.Now()
-	return g.writePrettyJSON(filepath.Join(envDir, sanitizeName(env.ID)+".gopost.json"), env)
+	// Remove any prior file for this env ID (UUID-named or renamed slug).
+	if err := g.removeEnvironmentFilesByIDLocked(env.ID); err != nil {
+		return err
+	}
+	return g.writePrettyJSON(filepath.Join(envDir, environmentFileName(env.Name, env.ID)), env)
+}
+
+func (g *GitStore) removeEnvironmentFilesByIDLocked(id string) error {
+	envDir := filepath.Join(g.baseDir, "environments")
+	entries, err := os.ReadDir(envDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".gopost.json") {
+			continue
+		}
+		path := filepath.Join(envDir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var existing models.Environment
+		if err := json.Unmarshal(data, &existing); err != nil {
+			continue
+		}
+		if existing.ID == id {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (g *GitStore) GetEnvironments() ([]models.Environment, error) {
@@ -483,7 +518,7 @@ func (g *GitStore) GetEnvironment(id string) (*models.Environment, error) {
 func (g *GitStore) DeleteEnvironment(id string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return os.Remove(filepath.Join(g.baseDir, "environments", sanitizeName(id)+".gopost.json"))
+	return g.removeEnvironmentFilesByIDLocked(id)
 }
 
 // ==================== History ====================

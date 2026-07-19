@@ -10,7 +10,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"gopost/app/pkg/models"
 	"gopost/app/pkg/runner"
 	"gopost/app/pkg/runner/reporters"
 )
@@ -28,13 +26,13 @@ import (
 var version = "dev"
 
 func main() {
-	// Top-level flags
 	showVersion := flag.Bool("version", false, "Print version and exit")
 
-	// Subcommands: "run" and "watch"
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
-	runCollection := runCmd.String("collection", "", "Path to collection directory or .http file")
-	runEnv := runCmd.String("env", "", "Environment name to load from ~/.gopost/environments/")
+	runCollection := runCmd.String("collection", "", "Collection id/slug/name, collection directory, or .http file")
+	runDataDir := runCmd.String("data-dir", "", "Workspace root (default: GOPOST_DATA_DIR, saved workspace, or ~/.gopost)")
+	runEnv := runCmd.String("env", "", "Environment name or id under <data-dir>/environments/")
+	runEnvFile := runCmd.String("env-file", "", "Path to an environment .gopost.json / .json file")
 	runReporter := runCmd.String("reporter", "console", "Reporter: console, junit, json")
 	runOutput := runCmd.String("output", "", "Output file path (default: stdout)")
 	runParallel := runCmd.Int("parallel", 1, "Number of parallel workers")
@@ -49,13 +47,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, `GoPost CLI — API collection runner and .http file watcher.
 
 Usage:
-  gopost [flags]                      Launch desktop GUI (via main app)
   gopost run [flags] <path>           Run a collection or .http file
   gopost watch [flags] <path>         Watch a .http file and run on changes
   gopost --version                    Print version
 
 Run Flags:
-  --env NAME           Environment name to load variables from
+  --data-dir PATH      Workspace root (collections/, environments/)
+  --env NAME           Environment name/id under <data-dir>/environments/
+  --env-file PATH      Load environment from a specific file
   --reporter TYPE      Reporter: console (default), junit, json
   --output PATH        Write report to file (default: stdout)
   --parallel N         Number of parallel workers (default: 1)
@@ -67,8 +66,9 @@ Watch Flags:
   --run-on-start       Run all requests when watching starts (default: true)
 
 Examples:
-  gopost run --reporter junit --output results.xml my-api
-  gopost run --env production --parallel 4 ./api.http
+  gopost run --data-dir . --env ci --reporter junit --output results.xml checkout-api
+  gopost run --data-dir . ./collections/checkout-api
+  gopost run --env-file ./ci.secret.gopost.json ./api.http
   gopost watch ./api.http
 `)
 	}
@@ -95,16 +95,15 @@ Examples:
 	case "run":
 		runCmd.Parse(remainingArgs)
 		collectionPath := *runCollection
-		// If --collection wasn't set, try the first positional arg
 		if collectionPath == "" && runCmd.NArg() > 0 {
 			collectionPath = runCmd.Arg(0)
 		}
 		if collectionPath == "" {
 			fmt.Fprintln(os.Stderr, "Error: collection path or .http file required")
-			fmt.Fprintln(os.Stderr, "Usage: gopost run --collection <name|.http-file> [flags]")
+			fmt.Fprintln(os.Stderr, "Usage: gopost run [flags] <collection|.http-file>")
 			os.Exit(1)
 		}
-		handleRun(collectionPath, runEnv, runReporter, runOutput, runParallel, runTimeout, runStopOnFail)
+		handleRun(collectionPath, runDataDir, runEnv, runEnvFile, runReporter, runOutput, runParallel, runTimeout, runStopOnFail)
 
 	case "watch":
 		watchCmd.Parse(remainingArgs)
@@ -127,9 +126,14 @@ Examples:
 	}
 }
 
-func handleRun(collectionPath string, envName *string, reporterName *string, outputPath *string, parallel *int, timeout *time.Duration, stopOnFail *bool) {
+func handleRun(
+	collectionPath string,
+	dataDir, envName, envFile, reporterName, outputPath *string,
+	parallel *int, timeout *time.Duration, stopOnFail *bool,
+) {
 	cfg := runner.Config{
 		CollectionPath: collectionPath,
+		DataDir:        *dataDir,
 		Parallel:       *parallel,
 		Timeout:        *timeout,
 		StopOnFail:     *stopOnFail,
@@ -137,8 +141,23 @@ func handleRun(collectionPath string, envName *string, reporterName *string, out
 		Output:         *outputPath,
 	}
 
-	if *envName != "" {
-		env, err := loadEnvironment(*envName)
+	resolvedDir, err := runner.ResolveDataDir(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: resolve data dir: %v\n", err)
+		os.Exit(1)
+	}
+	cfg.DataDir = resolvedDir
+
+	switch {
+	case *envFile != "":
+		env, err := runner.LoadEnvironmentFile(*envFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to load --env-file: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.Environment = env
+	case *envName != "":
+		env, err := runner.LoadEnvironmentByName(resolvedDir, *envName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load environment %q: %v\n", *envName, err)
 		} else {
@@ -243,52 +262,10 @@ func writeReport(result *runner.Result, reporterName string, outputPath string, 
 	}
 }
 
-// loadEnvironment reads an environment file from ~/.gopost/environments/.
-func loadEnvironment(name string) (*models.Environment, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	envDir := filepath.Join(home, ".gopost", "environments")
-	entries, err := os.ReadDir(envDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		path := filepath.Join(envDir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var env models.Environment
-		if err := json.Unmarshal(data, &env); err != nil {
-			continue
-		}
-		if env.Name == name || env.ID == name {
-			return &env, nil
-		}
-	}
-	return nil, fmt.Errorf("environment %q not found", name)
-}
-
 func lastModTime(path string) time.Time {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return time.Time{}
 	}
 	return fi.ModTime()
-}
-
-func splitFlags(args []string) (flags []string, positional []string) {
-	for _, a := range args {
-		if len(a) > 0 && a[0] == '-' {
-			flags = append(flags, a)
-		} else {
-			positional = append(positional, a)
-		}
-	}
-	return
 }

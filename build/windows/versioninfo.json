@@ -19,7 +19,7 @@
     "FileSubType": "00"
   },
   "StringFileInfo": {
-    "Comments": "A fast, native API client and test runner — an open-source Postman alternative",
+    "Comments": "Git-friendly HTTP workspace and CI runner",
     "CompanyName": "GoPost",
     "FileDescription": "GoPost API Client",
     "FileVersion": "1.0.0",

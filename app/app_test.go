@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -686,6 +687,30 @@ func TestApp_GetStorageInfo(t *testing.T) {
 	info := a.GetStorageInfo()
 	if info["base_dir"] == "" {
 		t.Errorf("base_dir missing: %#v", info)
+	}
+}
+
+func TestApp_SetWorkspaceDir(t *testing.T) {
+	a := newTestApp(t)
+	ws := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	info, err := a.SetWorkspaceDir(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info["base_dir"] == "" {
+		t.Fatal("missing base_dir")
+	}
+	col, err := a.CreateCollection("Demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if col.ID != "Demo" {
+		t.Fatalf("expected slug id Demo, got %q", col.ID)
+	}
+	cmd := a.BuildCICommand(col.ID, "ci")
+	if cmd == "" || !strings.Contains(cmd, "--data-dir") || !strings.Contains(cmd, "Demo") || !strings.Contains(cmd, "--env") {
+		t.Fatalf("bad ci command: %s", cmd)
 	}
 }
 

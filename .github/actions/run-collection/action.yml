@@ -3,18 +3,26 @@
 # Runs a GoPost collection in CI and uploads JUnit test results.
 #
 # Usage:
-#   - uses: berksunduri/GOPost/.github/actions/run-collection@main
+#   - uses: berksunduri/GoPost/.github/actions/run-collection@main
 #     with:
-#       collection: my-api
-#       environment: staging
+#       collection: checkout-api
+#       data_dir: .
+#       environment: ci
 name: "GoPost API Tests"
 description: "Run API tests with GoPost and upload results"
 inputs:
   collection:
-    description: "Path to collection directory or .http file"
+    description: "Collection id/slug/name, collection directory, or .http file"
     required: true
+  data_dir:
+    description: "Workspace root containing collections/ and environments/"
+    required: false
+    default: "."
   environment:
     description: "Environment name (optional)"
+    required: false
+  env_file:
+    description: "Path to environment .gopost.json file (optional)"
     required: false
   reporter:
     description: "Reporter format: console, junit, json"
@@ -38,22 +46,33 @@ runs:
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: "1.22"
+        go-version: "1.25.x"
 
     - name: Install GoPost CLI
       shell: bash
-      run: go install github.com/berksunduri/GOPost/cmd/gopost@latest
+      run: |
+        if [ -f "${{ github.action_path }}/../../../cmd/gopost/main.go" ]; then
+          go build -o "$RUNNER_TEMP/gopost" "${{ github.action_path }}/../../../cmd/gopost"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+        else
+          go install github.com/berksunduri/GoPost/cmd/gopost@latest
+        fi
 
     - name: Run collection
       shell: bash
       run: |
-        gopost run ${{ inputs.collection }} \
-          ${{ inputs.environment && format('--env {0}', inputs.environment) || '' }} \
-          --reporter ${{ inputs.reporter }} \
-          --output test-results.xml \
-          --parallel ${{ inputs.parallel }} \
-          --timeout ${{ inputs.timeout }} \
-          ${{ inputs.stop_on_fail == 'true' && '--stop-on-fail' || '' }}
+        ARGS=(run --data-dir "${{ inputs.data_dir }}" "${{ inputs.collection }}")
+        if [ -n "${{ inputs.env_file }}" ]; then
+          ARGS+=(--env-file "${{ inputs.env_file }}")
+        elif [ -n "${{ inputs.environment }}" ]; then
+          ARGS+=(--env "${{ inputs.environment }}")
+        fi
+        ARGS+=(--reporter "${{ inputs.reporter }}" --output test-results.xml)
+        ARGS+=(--parallel "${{ inputs.parallel }}" --timeout "${{ inputs.timeout }}")
+        if [ "${{ inputs.stop_on_fail }}" = "true" ]; then
+          ARGS+=(--stop-on-fail)
+        fi
+        gopost "${ARGS[@]}"
 
     - name: Upload test results
       if: always()

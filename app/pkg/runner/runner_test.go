@@ -348,3 +348,21 @@ func TestApplyAuth_EmptyBearer(t *testing.T) {
 		t.Errorf("empty bearer should not set Authorization, got %q", got)
 	}
 }
+
+func TestApplyAuth_APIKeyHeader(t *testing.T) {
+	httpReq, _ := http.NewRequest("GET", "https://example.com", nil)
+	auth := &models.RequestAuth{Type: "api_key", APIKey: "X-Key", APIKeyValue: "secret", APIKeyIn: "header"}
+	applyAuth(httpReq, auth, nil)
+	if httpReq.Header.Get("X-Key") != "secret" {
+		t.Fatalf("got %q", httpReq.Header.Get("X-Key"))
+	}
+}
+
+func TestApplyAuth_APIKeyQuery(t *testing.T) {
+	httpReq, _ := http.NewRequest("GET", "https://example.com/path", nil)
+	auth := &models.RequestAuth{Type: "api_key", APIKey: "token", APIKeyValue: "abc", APIKeyIn: "query"}
+	applyAuth(httpReq, auth, nil)
+	if httpReq.URL.Query().Get("token") != "abc" {
+		t.Fatalf("query=%q", httpReq.URL.RawQuery)
+	}
+}

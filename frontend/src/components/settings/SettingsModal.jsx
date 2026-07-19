@@ -17,11 +17,15 @@ import {
 import {
   Palette,
   Keyboard,
+  FolderOpen,
   RotateCcw,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
 import { t } from "@/i18n";
+import { api } from "@/api";
+import { useCollections } from "@/context/CollectionsContext";
+import { useEnvironments } from "@/context/EnvironmentsContext";
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUTS,
@@ -162,6 +166,7 @@ function ColorRow({ varKey, label, value, onChange, onReset }) {
 
 const SECTIONS = [
   { id: "appearance", labelKey: "settingsAppearance", icon: Palette },
+  { id: "workspace", labelKey: "settingsWorkspace", icon: FolderOpen },
   { id: "keybindings", labelKey: "settingsKeybindings", icon: Keyboard },
 ];
 
@@ -233,28 +238,76 @@ export function SettingsModal({
   const { themeId, setThemeId, themeList, customColors, setCustomColors } =
     useTheme();
   const { shortcuts, updateShortcut, resetShortcut } = useUserConfig();
+  const { loadCollections, selectedCollectionId } = useCollections();
+  const { loadEnvironments, environments, selectedEnvironmentId } =
+    useEnvironments();
   const [section, setSection] = useState(defaultSection);
   const [capturingId, setCapturingId] = useState(null);
   const [conflict, setConflict] = useState(null);
   const [colorGroupOpen, setColorGroupOpen] = useState({});
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [workspaceInput, setWorkspaceInput] = useState("");
+  const [workspaceStatus, setWorkspaceStatus] = useState("");
+  const [ciCopied, setCiCopied] = useState(false);
+  const [prevOpen, setPrevOpen] = useState(open);
 
-  // Resolve with defaults fallback
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setSection(defaultSection);
+      setCapturingId(null);
+      setConflict(null);
+      setWorkspaceStatus("");
+      setCiCopied(false);
+      api.GetStorageInfo().then((info) => {
+        const base = info?.base_dir || "";
+        setWorkspacePath(base);
+        setWorkspaceInput(base);
+      });
+    }
+  }
+
   const getKeys = useCallback(
     (id) => shortcuts[id] ?? DEFAULT_SHORTCUTS[id] ?? [],
     [shortcuts],
   );
 
-  useEffect(() => {
-    if (open) setSection(defaultSection);
-  }, [open, defaultSection]);
-
-  // Clear capture state when modal closes
-  useEffect(() => {
-    if (!open) {
-      setCapturingId(null);
-      setConflict(null);
+  const openWorkspace = useCallback(async () => {
+    const path = workspaceInput.trim();
+    if (!path) return;
+    try {
+      const info = await api.SetWorkspaceDir(path);
+      const base = info?.base_dir || path;
+      setWorkspacePath(base);
+      setWorkspaceInput(base);
+      setWorkspaceStatus(t("importSuccess"));
+      await Promise.all([loadCollections(), loadEnvironments()]);
+    } catch (err) {
+      setWorkspaceStatus(err?.message || t("importFailed"));
     }
-  }, [open]);
+  }, [workspaceInput, loadCollections, loadEnvironments]);
+
+  const revealWorkspace = useCallback(async () => {
+    try {
+      await api.RevealWorkspace();
+    } catch (err) {
+      setWorkspaceStatus(err?.message || t("importFailed"));
+    }
+  }, []);
+
+  const copyCICommand = useCallback(async () => {
+    const env = environments.find((e) => e.id === selectedEnvironmentId);
+    try {
+      const cmd = await api.BuildCICommand(
+        selectedCollectionId || "",
+        env?.name || "",
+      );
+      await navigator.clipboard.writeText(cmd);
+      setCiCopied(true);
+    } catch (err) {
+      setWorkspaceStatus(err?.message || t("importFailed"));
+    }
+  }, [selectedCollectionId, selectedEnvironmentId, environments]);
 
   const handleCapture = useCallback(
     (actionId, newKeys) => {
@@ -452,6 +505,66 @@ export function SettingsModal({
                       })}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {section === "workspace" && (
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-sm font-semibold mb-1">
+                      {t("settingsWorkspace")}
+                    </h2>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      {t("settingsWorkspaceDesc")}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="workspace-path" className="text-xs">
+                      {t("settingsWorkspacePath")}
+                    </Label>
+                    <input
+                      id="workspace-path"
+                      className="w-full h-9 rounded-md border bg-background px-3 text-sm font-mono"
+                      value={workspaceInput}
+                      placeholder={t("settingsWorkspacePlaceholder")}
+                      onChange={(e) => setWorkspaceInput(e.target.value)}
+                    />
+                    {workspacePath && (
+                      <p className="text-[11px] text-muted-foreground font-mono break-all">
+                        {workspacePath}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openWorkspace}
+                      className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs"
+                    >
+                      {t("settingsWorkspaceOpen")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={revealWorkspace}
+                      className="h-8 px-3 rounded-md border text-xs"
+                    >
+                      {t("settingsWorkspaceReveal")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyCICommand}
+                      className="h-8 px-3 rounded-md border text-xs"
+                    >
+                      {ciCopied
+                        ? t("settingsWorkspaceCopied")
+                        : t("settingsWorkspaceCopyCI")}
+                    </button>
+                  </div>
+                  {workspaceStatus && (
+                    <p className="text-xs text-muted-foreground">
+                      {workspaceStatus}
+                    </p>
+                  )}
                 </div>
               )}
 

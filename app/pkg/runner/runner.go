@@ -17,12 +17,14 @@ import (
 
 	"gopost/app/pkg/models"
 	"gopost/app/pkg/parser"
+	"gopost/app/pkg/scripting"
 	"gopost/app/pkg/storage"
 )
 
 // Config describes a runner invocation.
 type Config struct {
-	CollectionPath string              // Collection name or path to .http file
+	CollectionPath string              // Collection name, dir path, or .http file
+	DataDir        string              // Workspace root (empty → resolve via ResolveDataDir)
 	Environment    *models.Environment // Optional environment for variable substitution
 	Parallel       int                 // Number of parallel workers (1 = sequential)
 	Timeout        time.Duration       // Per-request timeout
@@ -78,7 +80,7 @@ var sharedTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 }
 
-// Execute sends an HTTP request and returns the result.
+// Execute sends an HTTP request and returns status, body, and duration.
 func (e *HTTPExecutor) Execute(req *models.HTTPRequest, env *models.Environment) (int, string, string, int64, error) {
 	urlStr := substituteVariables(req.URL, env)
 	method := req.Method
@@ -102,17 +104,24 @@ func (e *HTTPExecutor) Execute(req *models.HTTPRequest, env *models.Environment)
 	}
 	defer resp.Body.Close()
 
-	// Drain response body without allocating — callers that need the body
-	// can use a separate code path.
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 10*1024*1024))
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	duration := time.Since(start).Milliseconds()
+	if err != nil {
+		return resp.StatusCode, resp.Status, "", duration, err
+	}
 
-	return resp.StatusCode, resp.Status, "", duration, nil
+	return resp.StatusCode, resp.Status, string(bodyBytes), duration, nil
 }
 
 // Run executes all requests in a collection or .http file.
 func Run(cfg Config) (*Result, error) {
-	requests, collectionName, err := loadRequests(cfg.CollectionPath)
+	dataDir, err := ResolveDataDir(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve data dir: %w", err)
+	}
+	cfg.DataDir = dataDir
+
+	requests, collectionName, err := loadRequests(cfg.CollectionPath, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -155,29 +164,95 @@ func Run(cfg Config) (*Result, error) {
 
 // ==================== Request Loading ====================
 
-func loadRequests(path string) ([]models.HTTPRequest, string, error) {
-	// Try as .http file first
+func loadRequests(path, dataDir string) ([]models.HTTPRequest, string, error) {
 	if strings.HasSuffix(path, ".http") {
 		return loadHTTPFileRequests(path)
 	}
 
-	// Try as GitStore collection name
-	home, _ := os.UserHomeDir()
-	store, err := storage.NewGitStore(filepath.Join(home, ".gopost"))
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to open storage: %w", err)
-	}
-	requests, err := store.GetRequests(path)
-	if err == nil && len(requests) > 0 {
-		col, _ := store.GetCollection(path)
-		name := path
-		if col != nil {
-			name = col.Name
+	absPath, absErr := filepath.Abs(path)
+	if absErr == nil {
+		if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+			if reqs, name, err := loadCollectionDir(absPath); err == nil {
+				return reqs, name, nil
+			}
 		}
-		return requests, name, nil
 	}
 
-	return nil, "", fmt.Errorf("no requests found at %q (not a collection name or .http file)", path)
+	store, err := storage.NewGitStore(dataDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open storage at %s: %w", dataDir, err)
+	}
+
+	// Directory name (ID/slug) under collections/
+	if reqs, err := store.GetRequests(path); err == nil && len(reqs) > 0 {
+		name := path
+		if col, cerr := store.GetCollection(path); cerr == nil && col != nil {
+			name = col.Name
+		}
+		return reqs, name, nil
+	}
+
+	// Unique manifest name match
+	cols, err := store.GetCollections()
+	if err != nil {
+		return nil, "", err
+	}
+	var matched *models.Collection
+	for i := range cols {
+		if cols[i].Name == path {
+			if matched != nil {
+				return nil, "", fmt.Errorf("ambiguous collection name %q under %s", path, dataDir)
+			}
+			matched = &cols[i]
+		}
+	}
+	if matched != nil {
+		reqs, err := store.GetRequests(matched.ID)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(reqs) == 0 {
+			return nil, "", fmt.Errorf("collection %q has no requests", matched.Name)
+		}
+		return reqs, matched.Name, nil
+	}
+
+	return nil, "", fmt.Errorf(
+		"no requests found at %q (tried .http, collection directory, id/slug, and name under %s)",
+		path, dataDir,
+	)
+}
+
+// loadCollectionDir loads a directory that contains collection.gopost.json.
+func loadCollectionDir(dir string) ([]models.HTTPRequest, string, error) {
+	manifestPath := filepath.Join(dir, "collection.gopost.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		return nil, "", fmt.Errorf("not a collection directory: %w", err)
+	}
+
+	// Prefer store rooted at parent of collections/<id>
+	parent := filepath.Dir(dir)
+	if filepath.Base(parent) == "collections" {
+		store, err := storage.NewGitStore(filepath.Dir(parent))
+		if err != nil {
+			return nil, "", err
+		}
+		id := filepath.Base(dir)
+		reqs, err := store.GetRequests(id)
+		if err != nil {
+			return nil, "", err
+		}
+		name := id
+		if col, cerr := store.GetCollection(id); cerr == nil && col != nil {
+			name = col.Name
+		}
+		if len(reqs) == 0 {
+			return nil, "", fmt.Errorf("collection %q has no requests", name)
+		}
+		return reqs, name, nil
+	}
+
+	return nil, "", fmt.Errorf("collection directory must live under collections/: %s", dir)
 }
 
 func loadHTTPFileRequests(path string) ([]models.HTTPRequest, string, error) {
@@ -267,7 +342,26 @@ func runParallel(requests []models.HTTPRequest, cfg Config, exec *HTTPExecutor) 
 }
 
 func executeOne(req models.HTTPRequest, cfg Config, exec *HTTPExecutor) RequestResult {
-	status, _, _, duration, err := exec.Execute(&req, cfg.Environment)
+	engine := scripting.NewEngine()
+	envMap := environmentToStringMap(cfg.Environment)
+
+	if req.PreRequestScript != "" {
+		modified, err := engine.PreRequestScript(req.PreRequestScript, &req, envMap)
+		if err != nil {
+			return RequestResult{
+				Name:   req.Name,
+				Method: req.Method,
+				URL:    req.URL,
+				Passed: false,
+				Error:  err.Error(),
+			}
+		}
+		if modified != nil {
+			req = *modified
+		}
+	}
+
+	status, _, body, duration, err := exec.Execute(&req, cfg.Environment)
 
 	rr := RequestResult{
 		Name:     req.Name,
@@ -293,7 +387,37 @@ func executeOne(req models.HTTPRequest, cfg Config, exec *HTTPExecutor) RequestR
 		}
 	}
 
+	if req.TestScript != "" && rr.Error == "" {
+		resp := map[string]interface{}{
+			"status": status,
+			"code":   status,
+			"body":   body,
+		}
+		tr := engine.TestScript(req.TestScript, &req, resp, envMap)
+		if !tr.Passed {
+			rr.Passed = false
+			if tr.Error != "" {
+				rr.Error = tr.Error
+			} else if len(tr.Failures) > 0 {
+				rr.Error = strings.Join(tr.Failures, "; ")
+			} else {
+				rr.Error = "test script failed"
+			}
+		}
+	}
+
 	return rr
+}
+
+func environmentToStringMap(env *models.Environment) map[string]string {
+	out := make(map[string]string)
+	if env == nil {
+		return out
+	}
+	for k, v := range env.Variables {
+		out[k] = fmt.Sprintf("%v", v)
+	}
+	return out
 }
 
 // ==================== Variable Substitution ====================
@@ -312,6 +436,9 @@ func substituteVariables(s string, env *models.Environment) string {
 
 // applyAuth applies authentication headers from the request's auth config.
 func applyAuth(req *http.Request, auth *models.RequestAuth, env *models.Environment) {
+	if auth == nil {
+		return
+	}
 	token := substituteVariables(auth.Token, env)
 	switch auth.Type {
 	case "bearer":
@@ -324,5 +451,18 @@ func applyAuth(req *http.Request, auth *models.RequestAuth, env *models.Environm
 		if username != "" || password != "" {
 			req.SetBasicAuth(username, password)
 		}
+	case "api_key", "apikey":
+		key := substituteVariables(auth.APIKey, env)
+		val := substituteVariables(auth.APIKeyValue, env)
+		if key == "" || val == "" {
+			return
+		}
+		if strings.EqualFold(auth.APIKeyIn, "query") {
+			q := req.URL.Query()
+			q.Set(key, val)
+			req.URL.RawQuery = q.Encode()
+			return
+		}
+		req.Header.Set(key, val)
 	}
 }
