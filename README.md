@@ -12,6 +12,10 @@ Built with Go, Wails, and React.
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform" />
 </p>
 
+<p align="center">
+  <img src="docs/images/main.png" alt="GoPost main window" width="900" />
+</p>
+
 ---
 
 ## What it is
@@ -31,6 +35,16 @@ gopost run --data-dir . --env ci --reporter junit --output results.xml checkout-
 ```
 
 Open the same folder in the desktop app (Settings → Workspace) to debug.
+
+<p align="center">
+  <img src="docs/images/response.png" alt="Request and response editor" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/images/environments.png" alt="Environments and variables" width="440" />
+  &nbsp;
+  <img src="docs/images/source-control.png" alt="Source control panel" width="440" />
+</p>
 
 ## Features
 
