@@ -41,9 +41,15 @@ Open the same folder in the desktop app (Settings → Workspace) to debug.
 </p>
 
 <p align="center">
-  <img src="docs/images/environments.png" alt="Environments and variables" width="440" />
+  <img src="docs/images/body.png" alt="JSON request body" width="440" />
   &nbsp;
+  <img src="docs/images/environments.png" alt="Environments and variables" width="440" />
+</p>
+
+<p align="center">
   <img src="docs/images/source-control.png" alt="Source control panel" width="440" />
+  &nbsp;
+  <img src="docs/images/settings.png" alt="Settings" width="440" />
 </p>
 
 ## Features
