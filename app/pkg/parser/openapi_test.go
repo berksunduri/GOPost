@@ -297,6 +297,49 @@ func TestExtractOperations_EmptySpec(t *testing.T) {
 	}
 }
 
+func TestExtractOperations_RelativeServerURL(t *testing.T) {
+	// Server URL is relative (e.g., "/api") — should not be used as base.
+	// Paths should remain as-is so the user can set a base URL via environments.
+	raw := `{
+  "openapi": "3.0.1",
+  "info": { "title": "Test" },
+  "servers": [{ "url": "/api" }],
+  "paths": {
+    "/AddProductImages": {
+      "post": { "summary": "Add images" }
+    },
+    "/api/Administrator/GetProducts": {
+      "post": { "summary": "Get products" }
+    }
+  }
+}`
+	spec, err := ParseOpenAPISpec([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseOpenAPISpec failed: %v", err)
+	}
+
+	ops := ExtractOperations(spec)
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(ops))
+	}
+
+	byName := make(map[string]ImportedRequest)
+	for _, op := range ops {
+		byName[op.Name] = op
+	}
+
+	// Relative server URL should be ignored — paths stay as-is
+	addImages := byName["Add images"]
+	if addImages.URL != "/AddProductImages" {
+		t.Errorf("expected '/AddProductImages', got %q", addImages.URL)
+	}
+
+	getProducts := byName["Get products"]
+	if getProducts.URL != "/api/Administrator/GetProducts" {
+		t.Errorf("expected '/api/Administrator/GetProducts', got %q", getProducts.URL)
+	}
+}
+
 func TestResolveBaseURL(t *testing.T) {
 	// OpenAPI 3.x
 	spec3 := &OpenAPISpec{

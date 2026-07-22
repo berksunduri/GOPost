@@ -180,11 +180,14 @@ func ExtractOperations(spec *OpenAPISpec) []ImportedRequest {
 // resolveBaseURL constructs the base URL from the spec's server definitions.
 // OpenAPI 3.x uses servers[0].url; Swagger 2.0 uses schemes[0]://host + basePath.
 func resolveBaseURL(spec *OpenAPISpec) string {
-	// OpenAPI 3.x: servers array
+	// OpenAPI 3.x: servers array — only use absolute URLs
 	if len(spec.Servers) > 0 {
 		url := spec.Servers[0].URL
-		// Strip trailing slash for consistent concatenation
-		return strings.TrimRight(url, "/")
+		// Only use absolute URLs (http/https). Relative paths like "/api"
+		// don't carry a host and would produce broken or double-prefixed URLs.
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+			return strings.TrimRight(url, "/")
+		}
 	}
 
 	// Swagger 2.0: schemes + host + basePath
