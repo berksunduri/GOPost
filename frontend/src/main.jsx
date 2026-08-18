@@ -4,6 +4,7 @@ import { AppProvider } from "@/context/AppProvider";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { UserConfigProvider } from "@/context/UserConfigContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { TooltipProvider } from "@/components/ui";
 import { Toaster } from "sonner";
 import App from "@/App";
 import "@/App.css";
@@ -27,10 +28,12 @@ export function render() {
     <UserConfigProvider>
       <ThemeProvider>
         <AppProvider>
-          {toaster}
-          <ErrorBoundary>
-            <App />
-          </ErrorBoundary>
+          <TooltipProvider>
+            {toaster}
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
+          </TooltipProvider>
         </AppProvider>
       </ThemeProvider>
     </UserConfigProvider>
