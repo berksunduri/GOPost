@@ -19,6 +19,13 @@ type Folder struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// Param represents a query parameter
+type Param struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+}
+
 // HTTPRequest represents an HTTP request
 type HTTPRequest struct {
 	ID               string            `json:"id"`
@@ -35,6 +42,7 @@ type HTTPRequest struct {
 	CollectionID     string            `json:"collection_id"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
+	Params           []Param           `json:"params,omitempty"`
 }
 
 type RequestAuth struct {
@@ -123,6 +131,7 @@ type RequestFile struct {
 	TestScript       string            `json:"test_script,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
+	Params           []Param           `json:"params,omitempty"`
 }
 
 func (r *RequestFile) ToHTTPRequest(collectionID string) *HTTPRequest {
@@ -139,6 +148,7 @@ func (r *RequestFile) ToHTTPRequest(collectionID string) *HTTPRequest {
 		PreRequestScript: r.PreRequestScript,
 		TestScript:       r.TestScript,
 		CollectionID:     collectionID,
+		Params:           r.Params,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
 	}
@@ -200,6 +210,7 @@ func RequestFileFromHTTPRequest(req *HTTPRequest) *RequestFile {
 		TestScript:       req.TestScript,
 		CreatedAt:        req.CreatedAt,
 		UpdatedAt:        req.UpdatedAt,
+		Params:           req.Params,
 	}
 	if req.GraphQL != nil {
 		rf.GraphQL = req.GraphQL

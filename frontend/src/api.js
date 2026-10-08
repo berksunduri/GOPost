@@ -177,6 +177,7 @@ export const api = {
     graphqlVariables,
     graphqlOperationName,
     graphqlSchemaURL,
+    params = [],
   ) {
     const service = getAppService();
     if (service && typeof service.UpdateRequestWithGraphQL === "function")
@@ -192,6 +193,7 @@ export const api = {
         graphqlVariables,
         graphqlOperationName,
         graphqlSchemaURL,
+        params,
       );
     return fetchJSON(`/api/requests/${id}`, {
       method: "PUT",
@@ -208,6 +210,7 @@ export const api = {
           operationName: graphqlOperationName,
           schemaURL: graphqlSchemaURL,
         },
+        params,
       }),
     });
   },
@@ -272,6 +275,7 @@ export const api = {
     headers,
     body,
     description,
+    params = [],
   ) {
     const service = getAppService();
     if (service)
@@ -283,10 +287,11 @@ export const api = {
         headers,
         body,
         description,
+        params,
       );
     return fetchJSON(`/api/collections/${collectionId}/requests`, {
       method: "POST",
-      body: JSON.stringify({ name, method, url, headers, body, description }),
+      body: JSON.stringify({ name, method, url, headers, body, description, params }),
     });
   },
   async RunCollection(collectionId, stopOnFail = false) {
@@ -298,7 +303,7 @@ export const api = {
       body: JSON.stringify({ stopOnFail }),
     });
   },
-  async UpdateRequest(id, name, method, url, headers, body, description) {
+  async UpdateRequest(id, name, method, url, headers, body, description, params = []) {
     const service = getAppService();
     if (service)
       return service.UpdateRequest(
@@ -309,10 +314,11 @@ export const api = {
         headers,
         body,
         description,
+        params,
       );
     return fetchJSON(`/api/requests/${id}`, {
       method: "PUT",
-      body: JSON.stringify({ name, method, url, headers, body, description }),
+      body: JSON.stringify({ name, method, url, headers, body, description, params }),
     });
   },
   async SetRequestAuth(

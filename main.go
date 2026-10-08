@@ -238,6 +238,7 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 			Headers     map[string]string `json:"headers"`
 			Body        string            `json:"body"`
 			Description string            `json:"description"`
+			Params      []models.Param    `json:"params"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeJSON(w, nil, err)
@@ -251,6 +252,7 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 			Headers:      payload.Headers,
 			Body:         payload.Body,
 			Description:  payload.Description,
+			Params:       payload.Params,
 		})
 		writeJSON(w, val, err)
 	}))
@@ -343,6 +345,7 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 			Headers     map[string]string `json:"headers"`
 			Body        string            `json:"body"`
 			Description string            `json:"description"`
+			Params      []models.Param    `json:"params"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeJSON(w, nil, err)
@@ -355,6 +358,7 @@ func newAPIRouter(appInstance *app.App) http.Handler {
 			Headers:     payload.Headers,
 			Body:        payload.Body,
 			Description: payload.Description,
+			Params:      payload.Params,
 		})
 		writeJSON(w, val, err)
 	}))

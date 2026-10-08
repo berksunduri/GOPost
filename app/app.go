@@ -92,6 +92,7 @@ type CreateRequestParams struct {
 	Headers      map[string]string
 	Body         string
 	Description  string
+	Params       []models.Param
 }
 
 // UpdateRequestParams holds parameters for App.UpdateRequest and App.UpdateRequestWithGraphQL.
@@ -103,6 +104,7 @@ type UpdateRequestParams struct {
 	Body        string
 	Description string
 	GraphQL     *UpdateGraphQLParams
+	Params      []models.Param
 }
 
 // UpdateGraphQLParams holds GraphQL-specific parameters for update operations.
@@ -141,6 +143,7 @@ type ExecuteRawParams struct {
 	TestScript       string                 `json:"testScript"`
 	EnvVars          map[string]string      `json:"envVars"`
 	GraphQL          *models.GraphQLPayload `json:"graphql,omitempty"`
+	Params           []models.Param         `json:"params,omitempty"`
 }
 
 // schemaStore holds the GraphQL schema cache and its lock.
@@ -319,6 +322,7 @@ func (a *App) CreateRequest(p CreateRequestParams) (*models.HTTPRequest, error) 
 		CollectionID: p.CollectionID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
+		Params:       p.Params,
 	}
 
 	err := a.git.SaveRequest(request)
@@ -392,6 +396,7 @@ func (a *App) UpdateRequest(id string, p UpdateRequestParams) (*models.HTTPReque
 	request.Headers = p.Headers
 	request.Body = p.Body
 	request.Description = p.Description
+	request.Params = p.Params
 	request.UpdatedAt = time.Now()
 
 	err = a.git.SaveRequest(request)
@@ -465,6 +470,7 @@ func (a *App) ExecuteRequestRaw(p ExecuteRawParams) (map[string]interface{}, err
 		Auth:             p.Auth,
 		PreRequestScript: p.PreRequestScript,
 		TestScript:       p.TestScript,
+		Params:           p.Params,
 	}, p.EnvVars)
 }
 
@@ -480,6 +486,26 @@ func (a *App) executeHTTPRequest(request *models.HTTPRequest, envVars map[string
 			substitutedHeaders[substituteVars(k, envVars)] = substituteVars(v, envVars)
 		}
 		request.Headers = substitutedHeaders
+	}
+
+	// Apply query parameters (after env substitution so params can use env vars too)
+	if len(request.Params) > 0 {
+		activeParams := make([]string, 0)
+		for _, p := range request.Params {
+			if p.Enabled && p.Key != "" {
+				key := substituteVars(p.Key, envVars)
+				value := substituteVars(p.Value, envVars)
+				activeParams = append(activeParams,
+					fmt.Sprintf("%s=%s", url.QueryEscape(key), url.QueryEscape(value)))
+			}
+		}
+		if len(activeParams) > 0 {
+			sep := "?"
+			if strings.Contains(request.URL, "?") {
+				sep = "&"
+			}
+			request.URL += sep + strings.Join(activeParams, "&")
+		}
 	}
 
 	// Script env is mainly for chaining between pre-request and test scripts.
@@ -1516,6 +1542,7 @@ func (a *App) UpdateRequestWithGraphQL(id string, p UpdateRequestParams) (*model
 	request.Headers = p.Headers
 	request.Body = p.Body
 	request.Description = p.Description
+	request.Params = p.Params
 	request.UpdatedAt = time.Now()
 
 	if p.Method == "GRAPHQL" && p.GraphQL != nil && p.GraphQL.Query != "" {

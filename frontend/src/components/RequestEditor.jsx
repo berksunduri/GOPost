@@ -250,6 +250,12 @@ function RequestEditor() {
     });
     const u = url;
     const b = body;
+    // Prepare params for persistence (filter out empty keys)
+    const requestParams = params.filter((p) => p.key.trim()).map((p) => ({
+      key: p.key,
+      value: p.value,
+      enabled: p.enabled,
+    }));
     if (request?.id && !request.id.startsWith("new-")) {
       let updated;
       if (isGraphQL) {
@@ -265,6 +271,7 @@ function RequestEditor() {
           gqlVariables,
           gqlOperationName,
           gqlSchemaURL,
+          requestParams,
         );
       } else if (isConnectionMode) {
         // WS/SSE: save URL and headers, body is unused
@@ -276,6 +283,7 @@ function RequestEditor() {
           h,
           "",
           "",
+          requestParams,
         );
       } else {
         updated = await api.UpdateRequest(
@@ -286,6 +294,7 @@ function RequestEditor() {
           h,
           b,
           "",
+          requestParams,
         );
       }
       await api.SetRequestAuth(
@@ -316,6 +325,7 @@ function RequestEditor() {
       h,
       b,
       "",
+      requestParams,
     );
     await api.SetRequestAuth(
       created.id,
@@ -393,6 +403,12 @@ function RequestEditor() {
     try {
       const unsaved = !request?.id || String(request.id).startsWith("new-");
       let result;
+      // Prepare params for execution (filter out empty keys)
+      const requestParams = params.filter((p) => p.key.trim()).map((p) => ({
+        key: p.key,
+        value: p.value,
+        enabled: p.enabled,
+      }));
       if (unsaved) {
         const h = {};
         headers.forEach((row) => {
@@ -416,6 +432,7 @@ function RequestEditor() {
           preRequestScript,
           testScript,
           envVars,
+          params: requestParams,
         };
         if (isGraphQL) {
           payload.graphql = {
